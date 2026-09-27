@@ -5,7 +5,7 @@ const brand = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-brand"
 
 export const metadata = {
   title: "yappr: every podcast, free",
-  description: "Search and listen to any podcast for free. One short ad before and after, never in the middle.",
+  description: "Every Podcast. Every Creator. Search and listen to podcasts and live radio, free on yappr.",
 };
 
 export const viewport = {

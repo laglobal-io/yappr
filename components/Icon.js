@@ -1,4 +1,28 @@
+const HEART = "M12 20.3s-7.4-4.5-9.1-9.2C1.8 8 3.7 4.6 7.1 4.6c2 0 3.6 1.1 4.9 2.8 1.3-1.7 2.9-2.8 4.9-2.8 3.4 0 5.3 3.4 4.2 6.5-1.7 4.7-9.1 9.2-9.1 9.2z";
+
 const P = {
+  heart: <path d={HEART} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />,
+  heartFill: <path d={HEART} fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />,
+  share: (
+    <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3.5v11" />
+      <path d="M8 7.5l4-4 4 4" />
+      <path d="M5.5 11.5v6.5a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-6.5" />
+    </g>
+  ),
+  globe: (
+    <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5z" />
+    </g>
+  ),
+  next: (
+    <g fill="currentColor">
+      <path d="M5 6.2v11.6a.9.9 0 0 0 1.4.75l8.4-5.8a.9.9 0 0 0 0-1.5L6.4 5.45A.9.9 0 0 0 5 6.2z" />
+      <rect x="16.5" y="5" width="3" height="14" rx="1.5" />
+    </g>
+  ),
+  up: <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />,
   play: <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.2-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="currentColor" />,
   pause: (
     <>

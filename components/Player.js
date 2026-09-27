@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { usePlayer } from "./PlayerProvider";
 import Icon, { Dots } from "./Icon";
 import Art from "./Art";
-import { clock, colorsFor, initials, length } from "@/lib/format";
+import { clock } from "@/lib/format";
+import { showUrl } from "@/lib/api";
 
 const isAdPhase = (p) => p === "preroll" || p === "postroll";
 
@@ -13,7 +14,6 @@ function progress(p) {
   const loadingPre = p.phase === "loading" && p.slot === "preroll";
   const pastContent = p.phase === "postroll" || p.phase === "done" || (p.phase === "loading" && p.slot === "postroll");
   return {
-    pct,
     pre: p.phase === "preroll" ? pct : loadingPre ? 0 : 100,
     main: p.phase === "content" ? pct : pastContent ? 100 : 0,
     post: p.phase === "postroll" ? pct : p.phase === "done" ? 100 : 0,
@@ -22,180 +22,105 @@ function progress(p) {
 
 function subtitle(p) {
   const left = Math.max(0, p.dur - p.pos);
-  if (p.phase === "loading") return p.slot === "preroll" ? "Getting things ready" : "Almost done";
+  if (p.phase === "loading") return p.slot === "preroll" ? `${p.show.title}, starting up` : "Wrapping up";
   if (p.phase === "preroll") return `Ad from ${p.ad.advertiser}${p.dur ? `, episode in ${clock(left)}` : ""}`;
-  if (p.phase === "postroll") return `Ad from ${p.ad.advertiser}${p.dur ? `, ${clock(left)} left` : ""}`;
-  if (p.phase === "done") return "Finished. Tap to see what's next";
-  if (p.error) return "Audio didn't load. Tap play to retry";
-  return `${p.show.title}${p.dur ? `, ${clock(left)} left` : ""}`;
+  if (p.phase === "postroll") return `Ad from ${p.ad.advertiser}, thanks for listening`;
+  if (p.phase === "done") return `${p.show.title}, finished`;
+  if (p.error) return p.ep.live ? "Stream stopped. Tap play to reconnect" : "Audio didn't load. Tap play to retry";
+  if (p.ep.live) return `Live radio${p.show.author ? `, ${p.show.author}` : ""}`;
+  return p.show.title;
 }
 
-export function MiniPlayer({ onOpen }) {
+// The only player UI: a bar that slides up from the bottom when something plays.
+export function NowBar({ onOpenShow }) {
   const p = usePlayer();
-  if (!p.ep) return <div className="mini" aria-hidden="true" />;
-  const ad = isAdPhase(p.phase);
-  const { pct } = progress(p);
-  const label = p.phase === "done" ? "Play again" : p.playing ? "Pause" : "Play";
-  return (
-    <div className={`mini show${ad ? " is-ad" : ""}`}>
-      <button className="mini-open" onClick={onOpen} aria-label="Open player">
-        {ad ? (
-          <span className="art mini-art ad-art" aria-hidden="true">ad</span>
-        ) : (
-          <Art id={p.show.id} src={p.ep.image || p.show.image} title={p.show.title} className="mini-art" />
-        )}
-        <span className="mini-txt">
-          <b>{ad ? p.ad.advertiser : p.ep.title}</b>
-          <span>{subtitle(p)}</span>
-        </span>
-      </button>
-      <button className="pbtn" style={{ "--p": pct.toFixed(2) }} onClick={p.toggle} aria-label={label}>
-        <span>{p.phase === "loading" ? <Dots /> : <Icon name={p.playing ? "pause" : "play"} />}</span>
-      </button>
-    </div>
-  );
-}
-
-export function FullPlayer({ open, onClose, onShow, onPlay }) {
-  const p = usePlayer();
-  const closeRef = useRef(null);
+  const [expanded, setExpanded] = useState(false);
   const [drag, setDrag] = useState(null);
 
-  useEffect(() => {
-    if (open) {
-      const t = setTimeout(() => closeRef.current && closeRef.current.focus(), 80);
-      return () => clearTimeout(t);
-    }
-  }, [open]);
-
-  if (!p.ep) return <section className="player" aria-hidden="true" />;
+  if (!p.ep) return <div className="nowbar" aria-hidden="true" />;
 
   const ad = isAdPhase(p.phase);
   const loading = p.phase === "loading";
-  const content = p.phase === "content";
-  const [c1, c2] = colorsFor(p.show.id);
+  const live = !!p.ep.live;
+  const content = p.phase === "content" && !live;
   const bars = progress(p);
   const mainPct = drag != null ? drag / 10 : bars.main;
-  const left = Math.max(0, p.dur - p.pos);
+  const shownPos = drag != null ? (drag / 1000) * p.dur : p.pos;
+  const fav = p.isFavEp(p.ep.id);
+  const next = p.phase === "done" ? p.nextInQueue() : null;
   const label = p.phase === "done" ? "Play again" : p.playing ? "Pause" : "Play";
-  const kicker = ad ? "Quick ad" : loading ? "Loading" : p.phase === "done" ? "All done" : "Now playing";
+  const commit = (v) => { p.seekTo((Number(v) / 1000) * p.dur); setDrag(null); };
 
-  let next = null;
-  if (p.phase === "done" && p.queue.length) {
-    const i = p.queue.findIndex((e) => e.id === p.ep.id);
-    if (i >= 0 && i < p.queue.length - 1) next = p.queue[i + 1];
-  }
-
-  const cls = ["player", open && "open", ad && "is-ad", content && "content", p.playing && (ad || content) && "playing"]
-    .filter(Boolean)
-    .join(" ");
+  const cls = ["nowbar", "show", ad && "is-ad", live && "is-live", expanded && "expanded", p.playing && (ad || p.phase === "content") && "playing"].filter(Boolean).join(" ");
 
   return (
-    <section className={cls} style={{ "--c1": c1, "--c2": c2 }} role="dialog" aria-modal="true" aria-label="Now playing" aria-hidden={!open}>
-      <div className="player-inner">
-        <div className="p-top">
-          <button ref={closeRef} className="icon-btn" onClick={onClose} aria-label="Minimize player">
-            <Icon name="down" />
-          </button>
-          <span className="p-kicker">{kicker}</span>
-          <span className="spacer" />
+    <div className={cls} role="region" aria-label="Now playing">
+      <button className="nb-art-btn" onClick={() => onOpenShow(p.show.id)} aria-label={`Open ${p.show.title}`}>
+        {ad ? <span className="art nb-art ad-art" aria-hidden="true">ad</span> : <Art id={p.show.id} src={p.ep.image || p.show.image} title={p.show.title} className="nb-art" />}
+      </button>
+
+      <div className="nb-text">
+        <b title={p.ep.title}>{ad ? `Sponsored by ${p.ad.advertiser}` : p.ep.title}</b>
+
+        <button className="nb-sub" onClick={() => onOpenShow(p.show.id)}>{subtitle(p)}</button>
+      </div>
+
+      <div className="nb-controls">
+        {!live ? <button className="icon-btn nb-skip" onClick={() => p.seekBy(-15)} disabled={!content} aria-label="Back 15 seconds"><Icon name="back" /></button> : null}
+        <button className="nb-play" onClick={p.toggle} aria-label={label}>
+          {loading ? <Dots /> : <Icon name={p.playing ? "pause" : "play"} />}
+        </button>
+        {!live ? <button className="icon-btn nb-skip" onClick={() => p.seekBy(30)} disabled={!content} aria-label="Forward 30 seconds"><Icon name="fwd" /></button> : null}
+      </div>
+
+      {live && !ad ? (
+        <div className="nb-track">
+          <span className={`live-pill${p.playing && p.phase === "content" ? " on" : ""}`}>Live</span>
+          <span className="live-line" aria-hidden="true"><i /></span>
         </div>
-
-        <div className="stage">
-          <div className="blob">
-            {ad ? (
-              <span className="blob-txt">{p.phase === "preroll" ? "Your episode starts right after this" : "Thanks for listening"}</span>
-            ) : loading ? (
-              <Dots />
-            ) : (
-              <>
-                <span className="blob-ini">{initials(p.show.title)}</span>
-                {p.ep.image || p.show.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.ep.image || p.show.image} alt="" referrerPolicy="no-referrer" onError={(e) => (e.currentTarget.style.display = "none")} />
-                ) : null}
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="p-info">
-          <h2>{p.ep.title}</h2>
-          <button className="p-show" onClick={() => onShow(p.show.id)}>{p.show.title}</button>
-        </div>
-
-        {ad ? (
-          <div className="adbar">
-            <div>
-              <b>Sponsored by {p.ad.advertiser}</b>
-              {p.ad.line ? <span>{p.ad.line}</span> : null}
-            </div>
-            {p.ad.clickThrough ? <button className="pill-btn" onClick={p.clickAd}>Learn more</button> : null}
-          </div>
-        ) : null}
-
-        {p.error ? <p className="p-error" role="alert">{p.error}</p> : null}
-
+      ) : (
+      <div className="nb-track">
+        <span className="nb-time">{content ? clock(shownPos) : ad ? "Ad" : ""}</span>
         <div className="track">
           <div className="seg ad" title="Ad before"><i style={{ width: `${bars.pre}%` }} /></div>
-          <div className="seg main" style={{ "--k": `${mainPct}%` }}>
+          <div className={`seg main${content ? " live" : ""}`} style={{ "--k": `${mainPct}%` }}>
             <i style={{ width: `${mainPct}%` }} />
             <input
-              type="range"
-              min="0"
-              max="1000"
+              type="range" min="0" max="1000"
               value={Math.round(mainPct * 10)}
               disabled={!content}
               aria-label="Seek within episode"
               onChange={(e) => setDrag(Number(e.target.value))}
-              onPointerUp={(e) => { p.seekTo((Number(e.currentTarget.value) / 1000) * p.dur); setDrag(null); }}
-              onKeyUp={(e) => { p.seekTo((Number(e.currentTarget.value) / 1000) * p.dur); setDrag(null); }}
+              onPointerUp={(e) => commit(e.currentTarget.value)}
+              onKeyUp={(e) => commit(e.currentTarget.value)}
             />
           </div>
           <div className="seg ad" title="Ad after"><i style={{ width: `${bars.post}%` }} /></div>
         </div>
-        <div className="times">
-          <span>{content ? clock(drag != null ? (drag / 1000) * p.dur : p.pos) : ad ? "Ad" : ""}</span>
-          <span>{content ? `-${clock(drag != null ? p.dur - (drag / 1000) * p.dur : left)}` : ad && p.dur ? clock(left) : ""}</span>
-        </div>
-
-        <div className="controls">
-          <button className="icon-btn lg" onClick={() => p.seekBy(-15)} disabled={!content} aria-label="Back 15 seconds"><Icon name="back" /></button>
-          <button className="play-big" onClick={p.toggle} aria-label={label}>
-            {loading ? <Dots /> : <Icon name={p.playing ? "pause" : "play"} />}
-          </button>
-          <button className="icon-btn lg" onClick={() => p.seekBy(30)} disabled={!content} aria-label="Forward 30 seconds"><Icon name="fwd" /></button>
-        </div>
-
-        <div className="p-foot">
-          <button className="pill-btn ghost" onClick={p.cycleRate} disabled={!content}>{p.rate}× speed</button>
-          <p className="note"><i />Yellow is ads. Nothing interrupts the middle.</p>
-        </div>
-
-        {p.phase === "done" ? (
-          <div className="upnext">
-            {next ? (
-              <>
-                <p>Up next</p>
-                <button className="row" onClick={() => onPlay(p.show, next, p.queue, true)}>
-                  <Art id={p.show.id} src={next.image || p.show.image} title={p.show.title} />
-                  <span className="meta">
-                    <b>{next.title}</b>
-                    <span className="sub">{p.show.title}{length(next.duration) ? `, ${length(next.duration)}` : ""}</span>
-                  </span>
-                  <span className="go"><Icon name="play" /></span>
-                </button>
-              </>
-            ) : (
-              <>
-                <p>That's the latest from {p.show.title}.</p>
-                <button className="pill-btn ghost" onClick={() => onShow(p.show.id)}>See all episodes</button>
-              </>
-            )}
-          </div>
-        ) : null}
+        <span className="nb-time">{content ? `-${clock(p.dur - shownPos)}` : ad && p.dur ? clock(p.dur - p.pos) : ""}</span>
       </div>
-    </section>
+      )}
+
+      <div className="nb-extras">
+        {ad && p.ad.clickThrough ? <button className="pill-btn" onClick={p.clickAd}>Learn more</button> : null}
+        {next ? (
+          <button className="pill-btn next-btn" onClick={p.playNext}><Icon name="next" /> Next episode</button>
+        ) : null}
+        {!live ? <button className="pill-btn ghost nb-speed" onClick={p.cycleRate} disabled={!content} aria-label={`Playback speed ${p.rate}x`}>{p.rate}×</button> : null}
+        <button className={`round-btn${fav ? " on" : ""}`} aria-pressed={fav} onClick={() => p.toggleFavEp(p.show, p.ep)} aria-label={fav ? "Remove episode from favorites" : "Save episode to favorites"}>
+          <Icon name={fav ? "heartFill" : "heart"} />
+        </button>
+        <button className="round-btn" onClick={() => p.share(live
+          ? { title: p.show.title, text: `Listening to ${p.show.title} live on yappr`, url: p.show.website || window.location.origin }
+          : { title: p.ep.title, text: `${p.ep.title} from ${p.show.title}, on yappr`, url: showUrl(p.show.id, p.ep.id) })} aria-label={live ? "Share station" : "Share episode"}>
+          <Icon name="share" />
+        </button>
+      </div>
+
+      <button className="icon-btn nb-expand" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded} aria-label={expanded ? "Fewer controls" : "More controls"}>
+        <Icon name="up" />
+      </button>
+    </div>
   );
 }
 

@@ -73,12 +73,24 @@ npm run dev                  # open http://localhost:3000
 | `app/api/trending`, `app/api/search`, `app/api/podcast/[id]` | Server routes that call Podcast Index. Your secret never reaches the browser, and results are cached at the edge for 10–15 minutes to keep you well within API limits. |
 | `components/PlayerProvider.js` | The audio engine: one audio element, the ad → episode → ad sequence, resume positions, lock-screen controls. |
 | `lib/vast.js` | VAST ad fetching, parsing and tracking pixels. |
-| `components/App.js`, `components/Player.js` | The interface: search, trending, show pages, mini player and full player. |
+| `components/App.js` | Home page: search, Trending, Charts, For You and Favorites tabs. Shows expand inline below their row. |
+| `components/ShowPanel.js` | The expanded show view: host, categories, episode count, website, support link, and the episode list with play, favorite and share. |
+| `components/Player.js` | The now-playing bar at the bottom of the screen, plus the ad debug panel. |
+| `app/show/[id]` | Shareable links for shows and episodes (`/show/123` or `/show/123?ep=456`), with previews for iMessage, WhatsApp, X and Slack. |
+| `app/api/charts`, `app/api/rising` | Charts: Apple's top 50 for any of 24 countries, and "Rising" (fastest-climbing shows by language, from Podcast Index). |
+| `app/api/radio`, `lib/radio.js` | Live radio from the free Radio Browser directory, by country, genre, popular or rising. Only https streams that browsers can play are listed. |
+| `app/api/geo`, `lib/countries.js` | Picks each visitor's country automatically (from Vercel's location header) as the default for Charts and Radio. |
+| `app/terms`, `app/privacy`, `app/submit` | Terms of use, privacy policy, and the "Get your podcast on yappr" page. |
+| `lib/site.js` | Your business name, state, contact email and "last updated" date used on the legal pages. |
 | `app/globals.css` | All styling, including light and dark themes. |
 
-Listening progress and "Keep listening" are saved in each visitor's browser; there are no accounts.
+Listening progress, favorites, "Keep listening" and For You picks are saved in each visitor's browser; there are no accounts yet. For You combines the vibes a listener picks with the categories of shows they've played.
 
 ## Before you go big
+
+- **Legal pages are drafts.** Fill in your business name and state in `lib/site.js`, and have a lawyer review Terms and Privacy before running paid ads.
+- **Copyright agent.** To rely on DMCA safe-harbor protection in the US, register a designated agent with the US Copyright Office (copyright.gov/dmca-directory) and list it on the Terms page.
+- **Charts source.** Charts use Apple's public marketing feed. Confirm its terms fit your use, or swap in another source later.
 
 - **Rights and creators.** Placing your ads around other people's shows can raise copyright and creator-relations issues. Get legal advice, and consider a revenue share or opt-in program for creators.
 - **Privacy.** Ad servers use consent signals. Add a cookie/consent banner and a "Do Not Sell or Share" link (required in several US states) before running real ad campaigns.

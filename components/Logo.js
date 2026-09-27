@@ -1,0 +1,12 @@
+// The talking pebble.
+export default function LogoMark() {
+  return (
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <path d="M32 9C50 8 61 19 61 33c0 14-12.5 23-29 23S3 47 3 33C3 19 15 10 32 9z" fill="var(--pebble, #7B3FF2)" />
+      <circle cx="22.5" cy="26.5" r="3.6" fill="#fff" />
+      <circle cx="41.5" cy="26.5" r="3.6" fill="#fff" />
+      <path d="M20.5 34.5Q32 50 43.5 34.5Z" fill="#fff" />
+      <path d="M26.5 40.6Q32 46.5 37.5 40.6Q32 37.8 26.5 40.6Z" fill="#FF4F8B" />
+    </svg>
+  );
+}

@@ -42,8 +42,8 @@ function makeSilence() {
   return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
 }
 
-const slimShow = (s) => ({ id: s.id, title: s.title, author: s.author, image: s.image });
-const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published });
+const slimShow = (s) => ({ id: s.id, title: s.title, author: s.author, image: s.image, categories: (s.categories || []).slice(0, 4) });
+const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live });
 const isAdPhase = (p) => p === "preroll" || p === "postroll";
 
 export function PlayerProvider({ children }) {
@@ -83,11 +83,18 @@ export function PlayerProvider({ children }) {
     silenceRef.current = makeSilence();
   }, []);
 
+  // Lets the UI change saved preferences (like For You vibes) and re-render.
+  const updateStore = useCallback((fn) => {
+    if (!storeRef.current) return;
+    fn(storeRef.current);
+    persist(true);
+  }, [persist]);
+
   /* ---------- helpers ---------- */
   const saveResume = useCallback((force) => {
     const { phase, ep } = st.current;
     const a = audioRef.current;
-    if (phase !== "content" || !ep || !a || !storeRef.current) return;
+    if (phase !== "content" || !ep || ep.live || !a || !storeRef.current) return;
     const t = a.currentTime || 0;
     if (force || Math.abs(t - lastSaveRef.current) >= 5) {
       storeRef.current.resume[ep.id] = Math.floor(t);
@@ -151,10 +158,11 @@ export function PlayerProvider({ children }) {
 
   const startContent = useCallback(() => {
     const a = audioRef.current;
-    const { ep, rate } = st.current;
+    const { ep } = st.current;
+    const rate = ep.live ? 1 : st.current.rate; // live radio always plays at normal speed
     firedRef.current = new Set();
     update({ phase: "content", slot: null, ad: null, pos: 0, dur: ep.duration || 0, error: null });
-    const resume = (storeRef.current && storeRef.current.resume[ep.id]) || 0;
+    const resume = ep.live ? 0 : (storeRef.current && storeRef.current.resume[ep.id]) || 0;
     pendingSeekRef.current = resume;
     lastSaveRef.current = resume;
     a.src = ep.audio;
@@ -201,7 +209,7 @@ export function PlayerProvider({ children }) {
     update({ ...IDLE, rate: st.current.rate, show, ep, queue: queue || [], phase: "loading", slot: "preroll", playing: true });
 
     const store = storeRef.current;
-    if (store) {
+    if (store && !ep.live) {
       store.recent = [{ show: slimShow(show), ep: slimEp(ep) }, ...store.recent.filter((r) => r.ep.id !== ep.id)].slice(0, 8);
       persist(true);
     }
@@ -219,13 +227,15 @@ export function PlayerProvider({ children }) {
     if (phase === "done") { play(show, ep, queue); return; }
     if (phase === "loading") return;
     if (error && phase === "content") { update({ error: null }); a.load(); playAudio(); return; }
+    // Live streams: reconnect on resume so you hear what's on now, not what was buffered
+    if (a.paused && phase === "content" && ep.live) a.load();
     if (a.paused) playAudio();
     else a.pause();
   }, [play, update, playAudio]);
 
   const seekTo = useCallback((t) => {
     const a = audioRef.current;
-    if (!a || st.current.phase !== "content") return;
+    if (!a || st.current.phase !== "content" || (st.current.ep && st.current.ep.live)) return;
     const max = Number.isFinite(a.duration) ? a.duration - 1 : st.current.dur;
     a.currentTime = Math.max(0, Math.min(max, t));
     update({ pos: a.currentTime });
@@ -238,6 +248,7 @@ export function PlayerProvider({ children }) {
   }, [seekTo]);
 
   const cycleRate = useCallback(() => {
+    if (st.current.ep && st.current.ep.live) return;
     const rate = RATES[(RATES.indexOf(st.current.rate) + 1) % RATES.length];
     update({ rate });
     const a = audioRef.current;
@@ -251,6 +262,51 @@ export function PlayerProvider({ children }) {
     if (ad.clickThrough) window.open(ad.clickThrough, "_blank", "noopener,noreferrer");
     audioRef.current && audioRef.current.pause();
   }, [track]);
+
+  /* ---------- favorites, sharing, next ---------- */
+  const isFavShow = useCallback((id) => !!(storeRef.current && storeRef.current.favShows && storeRef.current.favShows[id]), []);
+  const isFavEp = useCallback((id) => !!(storeRef.current && storeRef.current.favEps && storeRef.current.favEps[id]), []);
+
+  const toggleFavShow = useCallback((show) => {
+    let added = false;
+    updateStore((store) => {
+      store.favShows = store.favShows || {};
+      if (store.favShows[show.id]) delete store.favShows[show.id];
+      else { store.favShows[show.id] = { ...slimShow(show), savedAt: Date.now() }; added = true; }
+    });
+    showToast(added ? `Saved ${show.title} to favorites` : "Removed from favorites");
+  }, [updateStore, showToast]);
+
+  const toggleFavEp = useCallback((show, ep) => {
+    let added = false;
+    updateStore((store) => {
+      store.favEps = store.favEps || {};
+      if (store.favEps[ep.id]) delete store.favEps[ep.id];
+      else { store.favEps[ep.id] = { show: slimShow(show), ep: slimEp(ep), savedAt: Date.now() }; added = true; }
+    });
+    showToast(added ? "Episode saved to favorites" : "Removed from favorites");
+  }, [updateStore, showToast]);
+
+  const share = useCallback(async ({ title, text, url }) => {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try { await navigator.share({ title, text, url }); return; }
+      catch (err) { if (err && err.name === "AbortError") return; }
+    }
+    try { await navigator.clipboard.writeText(url); showToast("Link copied. Paste it anywhere to share."); }
+    catch { showToast(url); }
+  }, [showToast]);
+
+  const nextInQueue = useCallback(() => {
+    const { queue, ep } = st.current;
+    if (!ep || !queue || !queue.length) return null;
+    const i = queue.findIndex((e) => e.id === ep.id);
+    return i >= 0 && i < queue.length - 1 ? queue[i + 1] : null;
+  }, []);
+
+  const playNext = useCallback(() => {
+    const next = nextInQueue();
+    if (next) play(st.current.show, next, st.current.queue);
+  }, [nextInQueue, play]);
 
   /* ---------- audio element events ---------- */
   const H = useRef({});
@@ -303,7 +359,9 @@ export function PlayerProvider({ children }) {
     const onEnded = () => {
       const { phase, ep } = st.current;
       if (phase === "preroll") { H.current.track("complete"); H.current.startContent(); }
-      else if (phase === "content") {
+      else if (phase === "content" && ep && ep.live) {
+        H.current.update({ playing: false, error: "The stream stopped. Tap play to reconnect." });
+      } else if (phase === "content") {
         const store = storeRef.current;
         if (store && ep) { delete store.resume[ep.id]; store.played[ep.id] = true; H.current.persist(true); }
         H.current.runPostroll();
@@ -356,7 +414,7 @@ export function PlayerProvider({ children }) {
       });
       ms.setActionHandler("play", () => H.current.playAudio());
       ms.setActionHandler("pause", () => audioRef.current && audioRef.current.pause());
-      const c = s.phase === "content";
+      const c = s.phase === "content" && !s.ep.live;
       ms.setActionHandler("seekbackward", c ? () => H.current.seekBy(-15) : null);
       ms.setActionHandler("seekforward", c ? () => H.current.seekBy(30) : null);
       ms.setActionHandler("seekto", c ? (d) => H.current.seekTo(d.seekTime) : null);
@@ -367,7 +425,8 @@ export function PlayerProvider({ children }) {
 
   const value = {
     ...s, play, toggle, seekBy, seekTo, cycleRate, clickAd,
-    logs, toast, store: storeRef.current, storeVersion,
+    logs, toast, store: storeRef.current, storeVersion, updateStore,
+    isFavShow, isFavEp, toggleFavShow, toggleFavEp, share, nextInQueue, playNext,
   };
 
   return (

@@ -18,8 +18,12 @@ const IDLE = {
 const VAST = {
   preroll: process.env.NEXT_PUBLIC_VAST_PREROLL_URL || "",
   postroll: process.env.NEXT_PUBLIC_VAST_POSTROLL_URL || "",
+  // Live radio often sells through a different partner (e.g. Triton). Falls back to the preroll tag.
+  live: process.env.NEXT_PUBLIC_VAST_LIVE_PREROLL_URL || process.env.NEXT_PUBLIC_VAST_PREROLL_URL || "",
 };
-
+// No ad if the listener heard one this recently (stops ad after ad when hopping between stations or episodes)
+const GAP_SETTING = process.env.NEXT_PUBLIC_AD_MIN_GAP_SECONDS;
+const AD_GAP_MS = (GAP_SETTING !== undefined && GAP_SETTING !== "" && !Number.isNaN(Number(GAP_SETTING)) ? Number(GAP_SETTING) : 90) * 1000;
 let houseAdsPromise = null;
 function houseAds() {
   if (!houseAdsPromise) {
@@ -45,7 +49,7 @@ function makeSilence() {
 }
 
 const slimShow = (s) => ({ id: s.id, title: s.title, author: s.author, image: s.image, categories: (s.categories || []).slice(0, 4) });
-const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live, isVideo: !!e.isVideo });
+const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live, isVideo: !!e.isVideo, chaptersUrl: e.chaptersUrl || "", transcript: e.transcript || null });
 const slimStation = (st) => ({ id: st.id, name: st.name, url: st.url, image: st.image, homepage: st.homepage, country: st.country, tags: st.tags || [] });
 const isAdPhase = (p) => p === "preroll" || p === "postroll";
 
@@ -110,8 +114,11 @@ export function PlayerProvider({ children }) {
     const t = a.currentTime || 0;
     if (force || Math.abs(t - lastSaveRef.current) >= 5) {
       storeRef.current.resume[ep.id] = Math.floor(t);
+      storeRef.current.resumeAt = storeRef.current.resumeAt || {};
+      storeRef.current.resumeAt[ep.id] = Date.now();
       lastSaveRef.current = t;
       persist(!!force);
+      H.current.syncProgress && H.current.syncProgress(!!force, false);
     }
   }, [persist]);
 
@@ -124,36 +131,54 @@ export function PlayerProvider({ children }) {
     }
     log(`${slot}: ${evt}`);
     const urls = evt === "impression" ? ad.impressions : evt === "clickThrough" ? ad.clickTracking : ad.tracking[evt] || [];
-    ping(urls);
+    ping(urls, ad.context);
   }, [log]);
 
+  const lastAdAt = useRef(0);
   const requestAd = useCallback(async (slot) => {
-    const tag = VAST[slot];
+    const { show, ep } = st.current;
+    if (Date.now() - lastAdAt.current < AD_GAP_MS) {
+      log(`${slot}: skipped, the listener heard an ad less than ${Math.round(AD_GAP_MS / 1000)}s ago`);
+      return null;
+    }
+    const live = !!(ep && ep.live);
+    const tag = live ? VAST.live : VAST[slot];
+    const context = {
+      slot,
+      content: live ? "live" : ep && ep.isVideo ? "video" : "podcast",
+      genre: (show && show.categories && show.categories[0]) || "",
+      showId: show ? String(show.id).replace(/^radio:/, "") : "",
+      show: show ? show.title : "",
+      episodeId: ep ? String(ep.id) : "",
+      country: (storeRef.current && storeRef.current.country) || "",
+    };
     if (tag) {
       log(`${slot}: VAST request sent`);
       try {
-        const ad = await fetchVastAd(tag, { timeoutMs: 2500 });
+        const ad = await fetchVastAd(tag, { timeoutMs: 2500, context });
         if (ad) {
-          log(`${slot}: VAST received (${ad.advertiser}${ad.duration ? `, ${Math.round(ad.duration)}s` : ""})`);
+          ad.context = context;
+          log(`${slot}: VAST received (${ad.advertiser}${ad.duration ? `, ${Math.round(ad.duration)}s` : ""}${ad.companion ? ", with banner" : ""})`);
           return ad;
         }
-        log(`${slot}: no ad available (no fill), skipping`);
+        log(`${slot}: no paid ad available (no fill)`);
       } catch (err) {
-        log(`${slot}: ${err.message}, skipping`);
+        log(`${slot}: ${err.message}`);
       }
-      return null;
     }
-    const list = (await houseAds()).filter((a) => a && a.src && (!a.slots || a.slots.includes(slot)));
+    // House ads fill in when there's no ad server, or it had nothing to serve
+    const list = (await houseAds()).filter((a) => a && a.src && (!a.slots || a.slots.includes(live ? "live" : slot) || (live && a.slots.includes("preroll"))));
     if (list.length) {
       const a = list[Math.floor(Math.random() * list.length)];
       log(`${slot}: house ad (${a.advertiser || "Sponsor"})`);
       return {
         advertiser: a.advertiser || "Sponsor", title: a.title || a.advertiser || "Sponsor", line: a.line || "",
         mediaUrl: a.src, duration: Number(a.duration) || 0, clickThrough: a.clickThrough || "",
+        companion: a.image ? { image: a.image, clickThrough: a.clickThrough || "", views: [] } : null,
         impressions: [], errors: [], tracking: {}, clickTracking: [], house: true,
       };
     }
-    log(`${slot}: no ad configured, skipping`);
+    log(`${slot}: no ad to play, skipping`);
     return null;
   }, [log]);
 
@@ -196,7 +221,11 @@ export function PlayerProvider({ children }) {
     playAudio();
   }, [update, playAudio]);
 
-  const finish = useCallback(() => update({ phase: "done", playing: false, ad: null }), [update]);
+  const finish = useCallback(() => {
+    update({ phase: "done", playing: false, ad: null });
+    // Sleep timer, then Up next, then autoplay the show's next episode
+    setTimeout(() => H.current.afterEpisode && H.current.afterEpisode(), 350);
+  }, [update]);
 
   const runPostroll = useCallback(async () => {
     const run = runRef.current;
@@ -269,11 +298,12 @@ export function PlayerProvider({ children }) {
     if (a && st.current.phase === "content") { a.defaultPlaybackRate = rate; a.playbackRate = rate; }
   }, [update]);
 
-  const clickAd = useCallback(() => {
+  const clickAd = useCallback((url) => {
     const { ad } = st.current;
     if (!ad) return;
     track("clickThrough", false);
-    if (ad.clickThrough) window.open(ad.clickThrough, "_blank", "noopener,noreferrer");
+    const target = (typeof url === "string" && url) || ad.clickThrough || (ad.companion && ad.companion.clickThrough);
+    if (target) window.open(target, "_blank", "noopener,noreferrer");
     audioRef.current && audioRef.current.pause();
   }, [track]);
 
@@ -393,11 +423,178 @@ export function PlayerProvider({ children }) {
     if (next) play(st.current.show, next, st.current.queue);
   }, [nextInQueue, play]);
 
+  /* ---------- sleep timer ---------- */
+  const [sleep, setSleepState] = useState({ mode: "off", until: 0 });
+  const sleepRef = useRef(sleep);
+  sleepRef.current = sleep;
+  const setSleep = useCallback((opt) => {
+    const a = audioRef.current;
+    if (a) a.volume = 1;
+    if (opt === "off") { setSleepState({ mode: "off", until: 0 }); showToast("Sleep timer off"); return; }
+    if (opt === "end") { setSleepState({ mode: "end", until: 0 }); showToast("Stopping after this episode"); return; }
+    setSleepState({ mode: "time", until: Date.now() + opt * 60000 });
+    showToast(`Sleep timer set for ${opt} minutes`);
+  }, [showToast]);
+  useEffect(() => {
+    if (sleep.mode !== "time") return;
+    const iv = setInterval(() => {
+      const a = audioRef.current;
+      const left = sleepRef.current.until - Date.now();
+      if (!a) return;
+      if (left <= 0) {
+        a.pause();
+        a.volume = 1;
+        setSleepState({ mode: "off", until: 0 });
+        showToast("Sleep timer ended. Goodnight");
+      } else if (left < 10000) {
+        a.volume = Math.max(0.05, left / 10000); // gentle fade over the last 10 seconds
+      }
+    }, 500);
+    return () => clearInterval(iv);
+  }, [sleep.mode, sleep.until, showToast]);
+
+  /* ---------- Up next queue and autoplay ---------- */
+  const [upNext, setUpNext] = useState([]);
+  const [autoplay, setAutoplayState] = useState(true);
+  const queueLoaded = useRef(false);
+  useEffect(() => {
+    if (queueLoaded.current || !storeRef.current) return;
+    queueLoaded.current = true;
+    setUpNext(storeRef.current.upNext || []);
+    setAutoplayState(storeRef.current.autoplay !== false);
+  }, [storeVersion]);
+  const saveQueue = useCallback((list) => {
+    setUpNext(list);
+    if (storeRef.current) { storeRef.current.upNext = list; persist(false); }
+  }, [persist]);
+  const addToQueue = useCallback((show, ep) => {
+    if (!ep || ep.live) return;
+    const list = (storeRef.current && storeRef.current.upNext) || [];
+    if (list.some((x) => x.ep.id === ep.id)) { showToast("Already in Up next"); return; }
+    saveQueue([...list, { show: slimShow(show), ep: slimEp(ep) }].slice(0, 50));
+    showToast("Added to Up next");
+  }, [saveQueue, showToast]);
+  const removeFromQueue = useCallback((id) => {
+    saveQueue(((storeRef.current && storeRef.current.upNext) || []).filter((x) => x.ep.id !== id));
+  }, [saveQueue]);
+  const playQueued = useCallback((id) => {
+    const list = (storeRef.current && storeRef.current.upNext) || [];
+    const item = list.find((x) => x.ep.id === id);
+    if (!item) return;
+    saveQueue(list.filter((x) => x.ep.id !== id));
+    play(item.show, item.ep, []);
+  }, [saveQueue, play]);
+  const setAutoplay = useCallback((on) => {
+    setAutoplayState(on);
+    if (storeRef.current) { storeRef.current.autoplay = on; persist(false); }
+  }, [persist]);
+  const afterEpisode = useCallback(() => {
+    if (st.current.phase !== "done") return;
+    if (sleepRef.current.mode === "end") {
+      setSleepState({ mode: "off", until: 0 });
+      showToast("Sleep timer ended. Goodnight");
+      return;
+    }
+    const list = (storeRef.current && storeRef.current.upNext) || [];
+    if (list.length) { playQueued(list[0].ep.id); return; }
+    const autoOn = !storeRef.current || storeRef.current.autoplay !== false;
+    const next = autoOn ? nextInQueue() : null;
+    if (next) play(st.current.show, next, st.current.queue);
+  }, [playQueued, nextInQueue, play, showToast]);
+
+  /* ---------- cast to speakers and TVs (Chromecast via Remote Playback, AirPlay in Safari) ---------- */
+  const [castSupported, setCastSupported] = useState(false);
+  useEffect(() => {
+    const a = audioRef.current;
+    setCastSupported(!!(a && (a.remote || a.webkitShowPlaybackTargetPicker)));
+  }, []);
+  const cast = useCallback(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.webkitShowPlaybackTargetPicker) { a.webkitShowPlaybackTargetPicker(); return; }
+    if (a.remote) a.remote.prompt().catch((err) => {
+      if (err && err.name === "NotFoundError") showToast("No speakers or TVs found nearby");
+      else if (err && err.name !== "AbortError") showToast("Casting isn't available for this audio");
+    });
+  }, [showToast]);
+
+  /* ---------- live radio: what's playing now ---------- */
+  const [nowPlaying, setNowPlaying] = useState(null);
+  const liveId = s.ep && s.ep.live && s.phase === "content" ? String(s.show.id).replace(/^radio:/, "") : null;
+  useEffect(() => {
+    setNowPlaying(null);
+    if (!liveId) return;
+    let stop = false;
+    const load = () => fetch(`/api/radio/now?id=${encodeURIComponent(liveId)}`).then((r) => r.json()).then((d) => { if (!stop) setNowPlaying(d.title || null); }).catch(() => {});
+    load();
+    const iv = setInterval(load, 30000);
+    return () => { stop = true; clearInterval(iv); };
+  }, [liveId]);
+
+  /* ---------- transcripts and chapters for the current episode ---------- */
+  const [extras, setExtras] = useState({ state: "none", chapters: [], transcript: [], timed: false });
+  const epKey = s.ep && !s.ep.live ? s.ep.id : null;
+  useEffect(() => {
+    const ep = st.current.ep;
+    if (!epKey || !ep || (!ep.chaptersUrl && !ep.transcript)) { setExtras({ state: "none", chapters: [], transcript: [], timed: false }); return; }
+    const ac = new AbortController();
+    setExtras({ state: "loading", chapters: [], transcript: [], timed: false });
+    const q = new URLSearchParams();
+    if (ep.chaptersUrl) q.set("chapters", ep.chaptersUrl);
+    if (ep.transcript) { q.set("transcript", ep.transcript.url); if (ep.transcript.type) q.set("ttype", ep.transcript.type); }
+    fetch(`/api/extras?${q}`, { signal: ac.signal }).then((r) => r.json())
+      .then((d) => setExtras({ state: "ok", chapters: d.chapters || [], transcript: d.transcript || [], timed: !!d.timed }))
+      .catch((err) => { if (err.name !== "AbortError") setExtras({ state: "none", chapters: [], transcript: [], timed: false }); });
+    return () => ac.abort();
+  }, [epKey]);
+
+  /* ---------- listening progress synced to your account ---------- */
+  const lastRemote = useRef({ id: null, at: 0 });
+  const syncProgress = useCallback((force, finished) => {
+    const db = auth.supabase, user = auth.user;
+    const { ep, show } = st.current;
+    const a = audioRef.current;
+    if (!db || !user || !ep || ep.live || !a) return;
+    if (!force && lastRemote.current.id === ep.id && Date.now() - lastRemote.current.at < 20000) return;
+    lastRemote.current = { id: ep.id, at: Date.now() };
+    db.from("playback").upsert({
+      user_id: user.id, episode_id: String(ep.id), position: finished ? 0 : Math.floor(a.currentTime || 0),
+      duration: Math.floor(Number.isFinite(a.duration) ? a.duration : ep.duration || 0), finished: !!finished,
+      show: slimShow(show), ep: slimEp(ep), updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id,episode_id" }).then(({ error }) => { if (error) console.warn("Progress sync failed", error.message); });
+  }, [auth.supabase, auth.user]);
+
+  // On sign-in: bring in progress from your other devices (newest wins)
+  useEffect(() => {
+    const db = auth.supabase, user = auth.user;
+    if (!db || !user || !storeRef.current) return;
+    let cancelled = false;
+    db.from("playback").select("episode_id,position,finished,show,ep,updated_at").order("updated_at", { ascending: false }).limit(100)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        const store = storeRef.current;
+        store.resumeAt = store.resumeAt || {};
+        const recentIds = new Set(store.recent.map((r) => r.ep.id));
+        const fromCloud = [];
+        data.forEach((row) => {
+          const at = Date.parse(row.updated_at) || 0;
+          if ((store.resumeAt[row.episode_id] || 0) >= at) return; // this device is newer
+          if (row.finished) { store.played[row.episode_id] = true; delete store.resume[row.episode_id]; return; }
+          store.resume[row.episode_id] = row.position;
+          store.resumeAt[row.episode_id] = at;
+          if (row.show && row.ep && !recentIds.has(row.episode_id)) fromCloud.push({ show: row.show, ep: row.ep });
+        });
+        store.recent = [...store.recent, ...fromCloud].slice(0, 12);
+        persist(true);
+      });
+    return () => { cancelled = true; };
+  }, [auth.supabase, auth.user, persist]);
+
   /* ---------- audio element events ---------- */
   const mediumRef = useRef(medium);
   mediumRef.current = medium;
   const H = useRef({});
-  H.current = { track, saveResume, startContent, runPostroll, finish, update, log, persist, showToast, toggle, seekBy, seekTo, playAudio, play };
+  H.current = { track, saveResume, startContent, runPostroll, finish, update, log, persist, showToast, toggle, seekBy, seekTo, playAudio, play, afterEpisode, syncProgress };
 
   useEffect(() => {
     const a = audioRef.current;
@@ -408,8 +605,14 @@ export function PlayerProvider({ children }) {
       if (skip()) return;
       H.current.update({ playing: true, error: null });
       if (isAdPhase(st.current.phase)) {
+        lastAdAt.current = Date.now();
         H.current.track("impression");
         H.current.track("start");
+        const comp = st.current.ad && st.current.ad.companion;
+        if (comp && comp.views && comp.views.length && !firedRef.current.has("companionView")) {
+          firedRef.current.add("companionView");
+          ping(comp.views, st.current.ad.context);
+        }
         if (adPausedRef.current) { adPausedRef.current = false; H.current.track("resume", false); }
       }
     };
@@ -451,6 +654,7 @@ export function PlayerProvider({ children }) {
       } else if (phase === "content") {
         const store = storeRef.current;
         if (store && ep) { delete store.resume[ep.id]; store.played[ep.id] = true; H.current.persist(true); }
+        H.current.syncProgress && H.current.syncProgress(true, true);
         H.current.runPostroll();
       } else if (phase === "postroll") { H.current.track("complete"); H.current.finish(); }
     };
@@ -494,7 +698,7 @@ export function PlayerProvider({ children }) {
     const art = s.ep.image || s.show.image;
     try {
       ms.metadata = new MediaMetadata({
-        title: ad && s.ad ? `Ad: ${s.ad.advertiser}` : s.ep.title,
+        title: ad && s.ad ? `Ad: ${s.ad.advertiser}` : s.ep.live && nowPlaying ? nowPlaying : s.ep.title,
         artist: s.show.title,
         album: "yappr",
         artwork: art ? [{ src: art, sizes: "512x512" }] : [],
@@ -508,13 +712,15 @@ export function PlayerProvider({ children }) {
     } catch {
       /* some browsers don't support every action */
     }
-  }, [s.ep, s.show, s.phase, s.ad]);
+  }, [s.ep, s.show, s.phase, s.ad, nowPlaying]);
 
   const value = {
     ...s, play, toggle, seekBy, seekTo, cycleRate, clickAd,
     logs, toast, store: storeRef.current, storeVersion, updateStore,
     isFavShow, isFavEp, toggleFavShow, toggleFavEp, share, nextInQueue, playNext,
     isFavStation, toggleFavStation, playStation, medium, setMedium, videoOpen, setVideoOpen, notify: showToast,
+    sleep, setSleep, upNext, addToQueue, removeFromQueue, playQueued, autoplay, setAutoplay,
+    castSupported, cast, nowPlaying, extras,
   };
 
   return (

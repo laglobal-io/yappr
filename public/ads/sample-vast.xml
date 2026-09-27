@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A test ad for checking your setup. Set NEXT_PUBLIC_VAST_PREROLL_URL=/ads/sample-vast.xml, open /?debug=1, and play an episode. -->
+<VAST version="4.0">
+  <Ad id="yappr-sample">
+    <InLine>
+      <AdSystem>yappr sample</AdSystem>
+      <AdTitle>yappr test ad</AdTitle>
+      <Advertiser>yappr (test ad)</Advertiser>
+      <Description>If you hear this chime, your ad setup works.</Description>
+      <Impression><![CDATA[/api/ad-ping?e=impression&cb=[CACHEBUSTING]&content=[YAPPR_CONTENT]&genre=[YAPPR_GENRE]]]></Impression>
+      <Creatives>
+        <Creative>
+          <Linear>
+            <Duration>00:00:05</Duration>
+            <TrackingEvents>
+              <Tracking event="start"><![CDATA[/api/ad-ping?e=start]]></Tracking>
+              <Tracking event="firstQuartile"><![CDATA[/api/ad-ping?e=q1]]></Tracking>
+              <Tracking event="midpoint"><![CDATA[/api/ad-ping?e=mid]]></Tracking>
+              <Tracking event="thirdQuartile"><![CDATA[/api/ad-ping?e=q3]]></Tracking>
+              <Tracking event="complete"><![CDATA[/api/ad-ping?e=complete]]></Tracking>
+            </TrackingEvents>
+            <VideoClicks>
+              <ClickThrough><![CDATA[https://yappr.fm]]></ClickThrough>
+            </VideoClicks>
+            <MediaFiles>
+              <MediaFile delivery="progressive" type="audio/mpeg" bitrate="96"><![CDATA[/ads/sample-ad.mp3]]></MediaFile>
+            </MediaFiles>
+          </Linear>
+        </Creative>
+        <Creative>
+          <CompanionAds>
+            <Companion width="300" height="300">
+              <StaticResource creativeType="image/png"><![CDATA[/icon-512.png]]></StaticResource>
+              <CompanionClickThrough><![CDATA[https://yappr.fm]]></CompanionClickThrough>
+            </Companion>
+          </CompanionAds>
+        </Creative>
+      </Creatives>
+    </InLine>
+  </Ad>
+</VAST>

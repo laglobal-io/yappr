@@ -610,3 +610,76 @@ img { max-width: 100%; }
 .account-card .pill-btn.ghost { background: var(--surface-2); }
 .library > .empty { margin-top: 24px; }
 .library > .empty .center { margin-top: 14px; }
+
+/* companion banner in the play bar during ads */
+.nb-art.companion { background: #fff; }
+.nb-art.companion::after { display: none; }
+.nb-art.companion img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* calmer "live / playing" motion: a slow, steady flow instead of a sweeping blob */
+.live-line i {
+  width: auto; inset: 0; opacity: 1; animation: live-flow 4s linear infinite;
+  background: repeating-linear-gradient(90deg,
+    color-mix(in srgb, var(--pink) 20%, transparent) 0,
+    color-mix(in srgb, var(--pink) 45%, transparent) 32px,
+    color-mix(in srgb, var(--pink) 20%, transparent) 64px);
+}
+.nowbar:not(.playing) .live-line i { animation-play-state: paused; opacity: 0.45; }
+@keyframes live-flow { from { background-position: 0 0; } to { background-position: 64px 0; } }
+.live-pill.on::before, .mode-switch button[aria-selected="true"] .live-dot { animation: live-breathe 2.8s ease-in-out infinite; }
+@keyframes live-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* Library: one column width for everything, so headings and rows line up with the account card */
+.library { max-width: 900px; margin-left: auto; margin-right: auto; }
+.library .account-card { max-width: none; }
+.library .lib-sec { margin-top: 40px; }
+.library .lib-head { margin-bottom: 14px; }
+.lib-sub { font-size: 0.95rem; font-weight: 700; color: var(--ink-2); margin: 18px 0 10px; text-align: left; }
+.lib-sec .lib-sub:first-of-type { margin-top: 0; }
+.lib-stations { margin-top: 0; }
+.library .list { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+@media (min-width: 940px) { .library .shelf-row { margin: 0; padding-left: 0; padding-right: 0; scroll-padding-inline: 0; } }
+.list-note { text-align: left; margin: -8px 0 18px; }
+
+/* ---------- play bar extras: sleep timer, Up next / chapters / transcript ---------- */
+.nowbar .round-btn { position: relative; }
+.btn-badge { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: var(--pink); color: #fff; font-size: 0.68rem; font-weight: 800; display: grid; place-items: center; }
+.btn-dot { position: absolute; top: 4px; right: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 2px var(--surface); }
+.bar-pop { position: absolute; right: 8px; bottom: calc(100% + 10px); z-index: 5; background: var(--surface); border-radius: 26px; box-shadow: var(--shadow), 0 0 0 1px var(--track); animation: panel-in 0.25s cubic-bezier(0.2, 0.9, 0.2, 1); }
+.sleep-pop { width: 230px; padding: 10px; display: grid; gap: 2px; }
+.sleep-pop b { padding: 8px 12px 6px; }
+.sleep-pop button { border: 0; background: none; text-align: left; padding: 11px 12px; border-radius: 14px; font-weight: 600; cursor: pointer; }
+.sleep-pop button:hover { background: var(--surface-2); }
+.sleep-pop button.off { color: var(--pink-2); }
+.bar-panel { width: min(440px, calc(100vw - 24px)); max-height: min(62vh, 560px); display: flex; flex-direction: column; overflow: hidden; }
+@media (max-width: 979px) { .bar-pop { left: 0; right: 0; width: auto; } .sleep-pop { left: auto; right: 0; width: 230px; } }
+.panel-tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--track); }
+.panel-tabs button { border: 0; background: none; border-radius: 999px; padding: 8px 14px; font-weight: 700; color: var(--ink-2); cursor: pointer; }
+.panel-tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); }
+.bar-panel-body { overflow-y: auto; padding: 10px 12px 14px; overscroll-behavior: contain; }
+.q-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.q-list li { display: flex; align-items: center; gap: 6px; }
+.q-play { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; border: 0; background: var(--surface-2); border-radius: 18px; padding: 6px 12px 6px 6px; text-align: left; cursor: pointer; }
+.q-play .art { width: 44px; height: 44px; border-radius: 12px; font-size: 16px; }
+.q-play span { min-width: 0; display: flex; flex-direction: column; }
+.q-play b, .q-play small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-play small { color: var(--ink-2); }
+.q-remove { width: 36px; height: 36px; background: transparent; }
+.q-empty { color: var(--ink-2); margin: 6px 4px 12px; }
+.q-empty svg { width: 16px; height: 16px; vertical-align: -3px; }
+.q-auto { display: flex; align-items: center; gap: 12px; justify-content: space-between; background: var(--surface-2); border-radius: 18px; padding: 12px 14px; margin-top: 12px; }
+.q-auto b { display: block; }
+.q-auto span { display: block; color: var(--ink-2); font-size: 0.86rem; }
+.ch-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ch-list button { width: 100%; display: flex; gap: 12px; border: 0; background: none; text-align: left; padding: 10px 12px; border-radius: 14px; cursor: pointer; font-weight: 600; }
+.ch-list button:hover { background: var(--surface-2); }
+.ch-list button.on { background: color-mix(in srgb, var(--pink) 14%, var(--surface)); color: var(--ink); }
+.ch-time, .cue-time { color: var(--ink-2); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 0.85rem; flex: none; }
+.follow { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--ink-2); margin: 0 4px 8px; }
+.tr-list { display: grid; gap: 2px; }
+.cue { display: block; width: 100%; border: 0; background: none; text-align: left; padding: 8px 10px; border-radius: 12px; line-height: 1.5; cursor: pointer; color: var(--ink-2); font: inherit; }
+.cue:hover { background: var(--surface-2); }
+.cue.on { background: color-mix(in srgb, var(--pink) 14%, var(--surface)); color: var(--ink); }
+.cue.plain { cursor: default; color: var(--ink); margin: 0; }
+.spk { display: block; color: var(--ink); font-size: 0.85rem; margin-bottom: 2px; }
+@media (min-width: 980px) { .nb-extras { gap: 6px; } .nowbar .round-btn { width: 42px; height: 42px; } }

@@ -235,12 +235,23 @@ function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
           {ep.published ? <span>{ago(ep.published)}</span> : null}
           {length(ep.duration) ? <span>{length(ep.duration)}</span> : null}
           {ep.explicit ? <span>Explicit</span> : null}
+          {ep.chaptersUrl ? <span>Chapters</span> : null}
+          {ep.transcript ? <span>Transcript</span> : null}
           {done ? <span className="done">Played</span> : resume && ep.duration && !now ? <span>{clock(ep.duration - resume)} left</span> : null}
           {guests.length ? <span>With {guests.slice(0, 2).join(" and ")}</span> : null}
         </div>
         {progress != null ? <span className="bar"><i style={{ width: `${Math.max(2, Math.min(100, progress * 100))}%` }} /></span> : null}
       </div>
       <div className="ep-actions">
+        {(() => {
+          const queued = player.upNext.some((x) => x.ep.id === ep.id);
+          return (
+            <button className={`round-btn sm${queued ? " on" : ""}`} onClick={() => (queued ? player.removeFromQueue(ep.id) : player.addToQueue(feed, ep))}
+              aria-pressed={queued} aria-label={queued ? `Remove ${ep.title} from Up next` : `Add ${ep.title} to Up next`}>
+              <Icon name={queued ? "queued" : "queue"} />
+            </button>
+          );
+        })()}
         <button className={`round-btn sm${fav ? " on" : ""}`} aria-pressed={fav} onClick={() => player.toggleFavEp(feed, ep)} aria-label={fav ? "Remove episode from favorites" : "Save episode to favorites"}>
           <Icon name={fav ? "heartFill" : "heart"} />
         </button>

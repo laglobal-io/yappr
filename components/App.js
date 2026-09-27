@@ -82,7 +82,10 @@ function Shell({ initialShow, initialEp }) {
     if (!storeReady) return;
     if (!window.location.hash && store.mode && MODES.some((m) => m.id === store.mode)) setModeState(store.mode);
     if (store.country && isCountry(store.country)) setCountryState(store.country);
-    else getJSON("/api/geo").then((d) => setCountryState(d.country)).catch(() => setCountryState("us"));
+    else getJSON("/api/geo").then((d) => {
+      setCountryState(d.country);
+      player.updateStore((s) => { if (!s.country) s.country = d.country; }); // also used for ad targeting
+    }).catch(() => setCountryState("us"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeReady]);
 
@@ -244,7 +247,7 @@ function useFeed(url) {
     const ac = new AbortController();
     setData((d) => ({ ...d, state: "loading" }));
     getJSON(url, ac.signal)
-      .then((d) => setData({ state: "ok", feeds: d.feeds || [], shows: d.shows || [], stations: d.stations || [], episodes: d.episodes || [] }))
+      .then((d) => setData({ state: "ok", feeds: d.feeds || [], shows: d.shows || [], stations: d.stations || [], episodes: d.episodes || [], basis: d.basis, note: d.note }))
       .catch((err) => { if (err.name !== "AbortError") setData({ state: "error", feeds: [], shows: [], stations: [], episodes: [], error: err.message }); });
     return () => ac.abort();
   }, [url]);
@@ -398,7 +401,8 @@ function FeedShelf({ url, pick = "feeds", fallbackUrl, ...rest }) {
   const fb = useFeed(needFallback ? fallbackUrl : null);
   const d = needFallback ? fb : data;
   const items = d[pick].length ? d[pick] : d.feeds;
-  return <Shelf items={items} state={d.state} error={d.error} keyFor={showKey} {...rest} />;
+  const notRanked = d.basis === "activity" || d.basis === "recency";
+  return <Shelf items={items} state={d.state} error={d.error} keyFor={showKey} {...rest} note={d.note || rest.note} ranked={rest.ranked && !notRanked} />;
 }
 
 /* ---------- Home ---------- */
@@ -544,9 +548,9 @@ function VideoHome({ genre, panel, seeAll }) {
   const watching = p.recent.filter((r) => r.ep.isVideo);
   const forYou = !v.cat && p.cats.length ? `/api/video?sort=fresh&cat=${encodeURIComponent(p.cats.join(","))}` : null;
   const rows = [
-    { id: "vfresh", title: g ? `New ${g} to watch` : "New to watch", note: "Video podcasts with the newest episodes", url: `/api/video?sort=fresh${cat}`, kind: "shows" },
-    { id: "vtop", title: g ? `Top ${g} video podcasts` : "Top video podcasts", note: "The biggest video shows still publishing", url: `/api/video?sort=top${cat}`, kind: "ranked" },
-    { id: "vrising", title: g ? `Rising ${g} video podcasts` : "Rising video podcasts", note: "Newer video shows posting often", url: `/api/video?sort=rising${cat}`, kind: "ranked" },
+    { id: "vtop", title: g ? `Top ${g} video podcasts` : "Top video podcasts", note: "Trending most on Podcast Index", url: `/api/video?sort=top${cat}`, kind: "ranked" },
+    { id: "vrising", title: g ? `Rising ${g} video podcasts` : "Rising video podcasts", note: "Climbing fastest over the last 3 days", url: `/api/video?sort=rising${cat}`, kind: "ranked" },
+    { id: "vfresh", title: g ? `New ${g} to watch` : "New to watch", note: "Video shows with the newest episodes", url: `/api/video?sort=fresh${cat}`, kind: "shows" },
   ];
   return (
     <div className="shelves">
@@ -580,6 +584,10 @@ function LiveHome({ genre, country, setCountry, seeAll }) {
     <div className="shelves">
       {!gg.tag && p.stations.length ? <Shelf id="lrecent" title="Recently played" kind="stations" state="ok" items={p.stations} /> : null}
       {!gg.tag && p.favStations.length ? <Shelf id="lfav" title="Your stations" kind="stations" state="ok" items={p.favStations} /> : null}
+      {!gg.tag && country ? (
+        <FeedShelf id="lnear" url={`/api/radio/local?country=${country}`} pick="stations" kind="stations" title="Near you"
+          onSeeAll={() => seeAll({ title: "Stations near you", kind: "stations", url: `/api/radio/local?country=${country}`, pick: "stations" })} />
+      ) : null}
       {rows.map((r) => {
         const url = `${base}&order=${r.order}`;
         return <FeedShelf key={r.id} id={r.id} url={url} pick="stations" kind="stations" title={r.title} note={r.note}
@@ -607,17 +615,19 @@ function ListView({ def, panel, onBack }) {
   if (!def) return null;
   const items = def.items || (def.pick ? data[def.pick] : data.feeds);
   const state = def.items ? "ok" : data.state;
+  const kind = def.kind === "ranked" && (data.basis === "activity" || data.basis === "recency") ? "shows" : def.kind;
   return (
     <section className="sec list-view">
       <div className="list-head">
         <button className="icon-btn" onClick={onBack} aria-label="Back to home"><Icon name="back" /></button>
         <h1>{def.title}</h1>
       </div>
-      {def.kind === "ranked" ? (
+      {data.note ? <p className="sec-note list-note">{data.note}</p> : null}
+      {kind === "ranked" ? (
         <ChartList shows={items} state={state} error={data.error} {...panel} origin="list" emptyText="Nothing here right now." />
-      ) : def.kind === "stations" ? (
+      ) : kind === "stations" ? (
         <StationGrid data={{ state, stations: items, error: data.error }} emptyText="No stations here right now." />
-      ) : def.kind === "episodes" ? (
+      ) : kind === "episodes" ? (
         items.length ? <div className="list">{items.map((it) => <EpisodeCard key={it.ep.id} show={it.show} ep={it.ep} onPlay={panel.onPlay} />)}</div>
           : <div className="empty">Nothing here yet.</div>
       ) : (
@@ -840,8 +850,18 @@ function Library({ panel, seeAll, nav }) {
       {history.length || p.stations.length ? (
         <div className="lib-sec">
           <div className="lib-head"><h2>History</h2><button className="see-all" onClick={clearHistory}>Clear</button></div>
-          {history.length ? <div className="list">{history.slice(0, 8).map((r) => <EpisodeCard key={r.ep.id} show={r.show} ep={r.ep} onPlay={panel.onPlay} />)}</div> : null}
-          {p.stations.length ? <div className="shelf-row lib-stations">{p.stations.slice(0, 8).map((st) => <StationTile key={st.id} st={st} />)}</div> : null}
+          {history.length ? (
+            <>
+              {p.stations.length ? <h3 className="lib-sub">Episodes</h3> : null}
+              <div className="list">{history.slice(0, 8).map((r) => <EpisodeCard key={r.ep.id} show={r.show} ep={r.ep} onPlay={panel.onPlay} />)}</div>
+            </>
+          ) : null}
+          {p.stations.length ? (
+            <>
+              {history.length ? <h3 className="lib-sub">Stations</h3> : null}
+              <div className="shelf-row lib-stations">{p.stations.slice(0, 8).map((st) => <StationTile key={st.id} st={st} />)}</div>
+            </>
+          ) : null}
         </div>
       ) : null}
     </section>

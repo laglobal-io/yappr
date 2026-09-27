@@ -35,3 +35,21 @@ create table if not exists public.feed_state (
   checked_at timestamptz not null default now()
 );
 alter table public.feed_state enable row level security;
+
+-- Listening progress, so you can pick up on any device where you left off
+create table if not exists public.playback (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  episode_id text not null,
+  position integer not null default 0,
+  duration integer not null default 0,
+  finished boolean not null default false,
+  show jsonb,
+  ep jsonb,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, episode_id)
+);
+alter table public.playback enable row level security;
+drop policy if exists "Own playback" on public.playback;
+create policy "Own playback" on public.playback
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create index if not exists playback_recent on public.playback (user_id, updated_at desc);

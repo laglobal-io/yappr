@@ -23,7 +23,7 @@ export default function VideoDock({ mediaRef, state, open, onHide }) {
     <>
       {showing && theater ? <div className="video-scrim" onClick={() => setTheater(false)} /> : null}
       <div className={cls} aria-hidden={!showing} role={showing ? "region" : undefined} aria-label={showing ? "Video player" : undefined}>
-        <video ref={mediaRef} playsInline preload="auto" onClick={() => showing && setTheater((t) => !t)} />
+        <video ref={mediaRef} playsInline preload="auto" x-webkit-airplay="allow" onClick={() => showing && setTheater((t) => !t)} />
         {showing ? (
           <div className="vd-bar">
             {ad ? <span className="live-pill ad-pill">Ad</span> : null}

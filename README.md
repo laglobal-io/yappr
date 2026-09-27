@@ -60,6 +60,9 @@ In Vercel → your project → **Settings → Environment Variables**, add these
 
 Then **Redeploy**.
 
+### Already set up Supabase before?
+Run `supabase/schema.sql` again in the SQL Editor. It's safe to re-run, and it adds the `playback` table that lets people pick up where they left off on any device.
+
 ### How alerts work
 - `vercel.json` schedules `/api/cron/new-episodes` once a day (14:00 UTC), which is the most Vercel's free plan allows. It checks every favorited show for a new episode and notifies fans who turned alerts on.
 - For hourly checks, upgrade to Vercel Pro and change the schedule to `0 * * * *`, or use a free service like cron-job.org to call `https://yourdomain/api/cron/new-episodes` with the header `Authorization: Bearer <your CRON_SECRET>`.
@@ -69,33 +72,42 @@ Then **Redeploy**.
 
 ## Ads
 
-The player runs **pre-roll → episode → post-roll**. Ads can't be skipped or scrubbed, and nothing plays mid-episode. If an ad is slow (over 2.5 seconds) or fails, the episode starts anyway.
+The player runs **pre-roll → episode → post-roll** (live radio gets a pre-roll only). Ads can't be skipped or scrubbed, and nothing plays mid-episode.
 
-There are two ways to serve ads:
+### Where ads come from, in order
+1. **Your ad server (VAST tags).** Set the tag URLs your ad partner gives you (AdsWizz, Triton, Google Ad Manager, SpringServe and others all speak VAST):
+   - `NEXT_PUBLIC_VAST_PREROLL_URL`: before podcast and video episodes
+   - `NEXT_PUBLIC_VAST_POSTROLL_URL`: after episodes
+   - `NEXT_PUBLIC_VAST_LIVE_PREROLL_URL`: before live radio (optional; uses the preroll tag if blank)
+2. **House ads** from `public/ads/house-ads.json`, used when no tag is set *or* the ad server has nothing to serve ("no fill"). Add `"slots": ["preroll", "postroll", "live"]` to control where each plays, and an optional `"image"` for a banner.
+3. **Nothing.** If there's no ad, or the ad server takes more than 2.5 seconds, the episode starts anyway.
 
-**House ads (works today).** Put MP3 files in `public/ads/` and list them in `public/ads/house-ads.json`:
+### Try it with the built-in test ad
+1. In Vercel, set `NEXT_PUBLIC_VAST_PREROLL_URL` to `/ads/sample-vast.xml` and redeploy.
+2. Open your site with `?debug=1`, tap the waveform button, and play an episode. You'll hear a short chime, see a banner in the play bar, and watch every tracking event appear in the panel.
+3. Swap in your real tag when your ad partner sends it.
 
-```json
-[
-  {
-    "advertiser": "Crumb Coffee",
-    "line": "Small-batch beans, delivered.",
-    "src": "/ads/crumb-15s.mp3",
-    "clickThrough": "https://example.com",
-    "slots": ["preroll", "postroll"]
-  }
-]
-```
+### Targeting: tell the ad server what's playing
+Put any of these in your tag URL and yappr fills them in for each request, for example
+`https://ads.example.com/vast?genre=[YAPPR_GENRE]&content=[YAPPR_CONTENT]&cc=[YAPPR_COUNTRY]&cb=[CACHEBUSTING]`
 
-If the list is empty (`[]`), episodes play with no ads.
+| Macro | Becomes |
+| --- | --- |
+| `[YAPPR_CONTENT]` | `podcast`, `video` or `live` |
+| `[YAPPR_GENRE]` | The show's or station's main category, e.g. `Comedy` |
+| `[YAPPR_COUNTRY]` | The listener's country, e.g. `us` |
+| `[YAPPR_SLOT]` | `preroll` or `postroll` |
+| `[YAPPR_SHOW_ID]`, `[YAPPR_SHOW]`, `[YAPPR_EPISODE_ID]` | What's about to play |
+| `[US_PRIVACY]`, `[GPC]` | Privacy signals: `1YYN` / `1` when the browser sends Global Privacy Control |
+| `[CACHEBUSTING]`, `[TIMESTAMP]` | Standard VAST macros |
 
-**AdsWizz or any VAST ad server.** Once your ad partner gives you VAST tag URLs, add them in Vercel as environment variables, then redeploy:
-- `NEXT_PUBLIC_VAST_PREROLL_URL`
-- `NEXT_PUBLIC_VAST_POSTROLL_URL`
+Ask your ad partner which parameter names their system expects, then map these macros to them.
 
-When these are set they replace house ads. The player follows wrapper redirects, picks the audio file, and fires impression, start, quartile, complete, pause, resume and click tracking automatically. Your ad partner may also need your site's domain to allow browser requests to their tag.
-
-**Checking ads are firing:** visit your site with `?debug=1` on the end (for example `https://your-site.vercel.app/?debug=1`) and tap the waveform button. It shows every ad request and tracking event live.
+### Other ad settings
+- **Banners (companion ads):** if the VAST response includes an image companion, it replaces the artwork in the play bar during the ad and is clickable. Its view pixels fire automatically.
+- **Frequency cap:** `NEXT_PUBLIC_AD_MIN_GAP_SECONDS` (default `90`) skips an ad if the listener heard one that recently, so hopping between stations doesn't mean ad after ad. Set `0` to turn it off.
+- **Tracking:** impression, start, 25/50/75%, complete, pause, resume, click and error pixels all fire automatically, with the same macros filled in.
+- **Before running paid campaigns:** add a consent banner (a CMP such as Google's, Cookiebot or OneTrust) and pass its consent string to your tag. `[US_PRIVACY]` covers the basic US opt-out signal, but most ad partners will ask for a proper consent tool.
 
 ## Run it on your computer (optional)
 
@@ -122,17 +134,27 @@ npm run dev                  # open http://localhost:3000
 | `app/show/[id]` | Shareable links for shows and episodes (`/show/123` or `/show/123?ep=456`), with previews for iMessage, WhatsApp, X and Slack. |
 | `app/api/charts`, `app/api/rising` | Top: Apple's top 50 for any of 24 countries. With a genre picked, it filters Apple's top 100 to that genre (Apple has no public per-genre charts). Rising: fastest-climbing shows by language and genre, from Podcast Index. |
 | `app/api/radio`, `lib/radio.js` | Live radio from the free Radio Browser directory, by country, genre, popular or rising. Only https streams that browsers can play are listed. |
-| `app/api/video` | The video catalog (shows tagged as video in Podcast Index) ranked for Watch mode: fresh, top and rising. |
+| `app/api/video` | Video rankings. Podcast Index's video catalog is unranked, so Top and Rising cross it with Podcast Index's trending list and rank by trend score (all-time and last 3 days). New to watch is sorted by newest episode. When too few video shows are trending in a genre, the row says so and shows the most active ones without rank numbers. |
 | `components/VideoDock.js` | The floating video window, with a bigger theater view and picture-in-picture. |
 | `components/AuthProvider.js`, `components/Account.js` | Sign-in (email link or Google), the account menu, and the alerts switch. |
 | `app/api/cron/new-episodes`, `public/sw.js` | The scheduled new-episode check and the service worker that shows alerts. |
 | `supabase/schema.sql` | Database tables and security rules for favorites and alerts. |
+| `app/api/radio/local` | "Near you": popular stations within about 120 km, using Vercel's approximate city-level location for the visitor (never GPS). Only shown when browsing your own country. |
+| `app/api/radio/now` | The song or show a station is playing right now, read from the station's stream information. Not every station sends it. |
+| `app/api/extras` | An episode's chapters and transcript (JSON, WebVTT, SRT, HTML or text), fetched on the server because podcast hosts usually block browsers from loading them. |
 | `app/api/geo`, `lib/countries.js` | Picks each visitor's country automatically (from Vercel's location header) as the default for Charts and Radio. |
 | `app/terms`, `app/privacy`, `app/submit` | Terms of use, privacy policy, and the "Get your podcast on yappr" page. |
 | `lib/site.js` | Your business name, state, contact email and "last updated" date used on the legal pages. |
 | `app/globals.css` | All styling, including light and dark themes. |
 
-Listening progress, "Keep listening" and For You picks are saved in each visitor's browser. Favorites are too, and they also sync to the visitor's account when they sign in. For You combines the vibes a listener picks with the categories of shows they've played.
+Listening progress, "Keep listening", Up next and For You picks are saved in each visitor's browser. Favorites and listening progress also sync to the visitor's account when they sign in, so they can pick up on any device.
+
+## Listening features
+- **Up next and autoplay:** add any episode to Up next from its row. When an episode ends, yappr plays the next queued episode, or (with Autoplay on) the show's next episode.
+- **Sleep timer:** 15, 30, 45 or 60 minutes, or the end of the episode, with a gentle fade-out.
+- **Chapters and transcripts:** when a show publishes them, the Up next panel gets Chapters and Transcript tabs. Tap a line to jump there; the transcript follows along as you listen.
+- **Cast:** send audio to Chromecast speakers and TVs (Chrome) or AirPlay (Safari).
+- **Live radio extras:** "Near you" stations, and the current song or show in the play bar and on the lock screen. For You combines the vibes a listener picks with the categories of shows they've played.
 
 ## Before you go big
 

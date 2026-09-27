@@ -49,7 +49,7 @@ function makeSilence() {
 }
 
 const slimShow = (s) => ({ id: s.id, title: s.title, author: s.author, image: s.image, categories: (s.categories || []).slice(0, 4) });
-const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live, isVideo: !!e.isVideo, chaptersUrl: e.chaptersUrl || "", transcript: e.transcript || null });
+const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live, isVideo: !!e.isVideo, chaptersUrl: e.chaptersUrl || "", transcript: e.transcript || null, type: e.type || "", description: (e.description || "").slice(0, 600) });
 const slimStation = (st) => ({ id: st.id, name: st.name, url: st.url, image: st.image, homepage: st.homepage, country: st.country, tags: st.tags || [] });
 const isAdPhase = (p) => p === "preroll" || p === "postroll";
 
@@ -68,7 +68,8 @@ export function PlayerProvider({ children }) {
   const firedRef = useRef(new Set());
   const adPausedRef = useRef(false);
   const lastSaveRef = useRef(0);
-  const pendingSeekRef = useRef(0);
+  const pendingSeekRef = useRef(null);
+  const jumpRef = useRef(null); // { id, t }: an exact start time (e.g. a chapter), not a resume
   const silenceRef = useRef("");
   const toastTimer = useRef(null);
 
@@ -200,7 +201,10 @@ export function PlayerProvider({ children }) {
     firedRef.current = new Set();
     update({ phase: "content", slot: null, ad: null, pos: 0, dur: ep.duration || 0, error: null });
     const resume = ep.live ? 0 : (storeRef.current && storeRef.current.resume[ep.id]) || 0;
-    pendingSeekRef.current = resume;
+    // Tie the start position to this episode's audio, so an earlier clip finishing loading can't use it up
+    const src = new URL(ep.audio, window.location.href).href;
+    pendingSeekRef.current = jumpRef.current && jumpRef.current.id === ep.id ? { src, t: jumpRef.current.t, exact: true } : { src, t: resume, exact: false };
+    jumpRef.current = null;
     lastSaveRef.current = resume;
     setVideoOpen(!!ep.isVideo && mediumRef.current === "watch");
     a.src = ep.audio;
@@ -262,6 +266,19 @@ export function PlayerProvider({ children }) {
     if (ad) startAd(ad, "preroll");
     else startContent();
   }, [saveResume, update, persist, requestAd, startAd, startContent]);
+
+  // Start an episode at a given time (e.g. a chapter). If it's already playing, just jump there.
+  const playAt = useCallback((show, ep, queue, seconds) => {
+    const a = audioRef.current;
+    if (st.current.ep && st.current.ep.id === ep.id && st.current.phase === "content" && a) {
+      a.currentTime = seconds;
+      if (a.paused) a.play().catch(() => {});
+      return;
+    }
+    jumpRef.current = { id: ep.id, t: seconds };
+    if (storeRef.current) delete storeRef.current.played[ep.id];
+    play(show, ep, queue);
+  }, [play]);
 
   const toggle = useCallback(() => {
     const a = audioRef.current;
@@ -519,15 +536,26 @@ export function PlayerProvider({ children }) {
   }, [showToast]);
 
   /* ---------- live radio: what's playing now ---------- */
+  // nowPlaying = { artist, song, art, text } (text = a show/program name when it isn't a song)
   const [nowPlaying, setNowPlaying] = useState(null);
+  const [songHistory, setSongHistory] = useState([]);
   const liveId = s.ep && s.ep.live && s.phase === "content" ? String(s.show.id).replace(/^radio:/, "") : null;
+  const stationKey = s.ep && s.ep.live ? s.ep.id : null;
+  useEffect(() => { setSongHistory([]); }, [stationKey]);
   useEffect(() => {
     setNowPlaying(null);
     if (!liveId) return;
     let stop = false;
-    const load = () => fetch(`/api/radio/now?id=${encodeURIComponent(liveId)}`).then((r) => r.json()).then((d) => { if (!stop) setNowPlaying(d.title || null); }).catch(() => {});
+    const load = () => fetch(`/api/radio/now?id=${encodeURIComponent(liveId)}`).then((r) => r.json()).then((d) => {
+      if (stop) return;
+      const now = d.now || null;
+      setNowPlaying(now);
+      if (now && now.song) {
+        setSongHistory((h) => (h[0] && h[0].song === now.song && h[0].artist === now.artist ? h : [{ ...now, at: Date.now() }, ...h].slice(0, 20)));
+      }
+    }).catch(() => {});
     load();
-    const iv = setInterval(load, 30000);
+    const iv = setInterval(load, 20000);
     return () => { stop = true; clearInterval(iv); };
   }, [liveId]);
 
@@ -536,12 +564,14 @@ export function PlayerProvider({ children }) {
   const epKey = s.ep && !s.ep.live ? s.ep.id : null;
   useEffect(() => {
     const ep = st.current.ep;
-    if (!epKey || !ep || (!ep.chaptersUrl && !ep.transcript)) { setExtras({ state: "none", chapters: [], transcript: [], timed: false }); return; }
+    const mp3 = ep && (/\.mp3(\?|$)/i.test(ep.audio || "") || /audio\/(mpeg|mp3)/i.test(ep.type || ""));
+    if (!epKey || !ep || (!ep.chaptersUrl && !ep.transcript && !mp3)) { setExtras({ state: "none", chapters: [], transcript: [], timed: false }); return; }
     const ac = new AbortController();
     setExtras({ state: "loading", chapters: [], transcript: [], timed: false });
     const q = new URLSearchParams();
     if (ep.chaptersUrl) q.set("chapters", ep.chaptersUrl);
     if (ep.transcript) { q.set("transcript", ep.transcript.url); if (ep.transcript.type) q.set("ttype", ep.transcript.type); }
+    if (!ep.chaptersUrl && mp3) q.set("audio", ep.audio); // chapters embedded in the MP3
     fetch(`/api/extras?${q}`, { signal: ac.signal }).then((r) => r.json())
       .then((d) => setExtras({ state: "ok", chapters: d.chapters || [], transcript: d.transcript || [], timed: !!d.timed }))
       .catch((err) => { if (err.name !== "AbortError") setExtras({ state: "none", chapters: [], transcript: [], timed: false }); });
@@ -638,8 +668,14 @@ export function PlayerProvider({ children }) {
     };
     const onMeta = () => {
       if (st.current.phase !== "content") return;
-      const resume = pendingSeekRef.current;
-      pendingSeekRef.current = 0;
+      const pending = pendingSeekRef.current;
+      if (!pending || pending.src !== a.currentSrc) return; // metadata for some other clip
+      pendingSeekRef.current = null;
+      if (pending.exact) {
+        if (!Number.isFinite(a.duration) || pending.t < a.duration) a.currentTime = pending.t;
+        return;
+      }
+      const resume = pending.t;
       if (resume > 5 && Number.isFinite(a.duration) && resume < a.duration - 10) {
         a.currentTime = resume;
         const m = Math.floor(resume / 60), sec = String(Math.floor(resume % 60)).padStart(2, "0");
@@ -698,10 +734,10 @@ export function PlayerProvider({ children }) {
     const art = s.ep.image || s.show.image;
     try {
       ms.metadata = new MediaMetadata({
-        title: ad && s.ad ? `Ad: ${s.ad.advertiser}` : s.ep.live && nowPlaying ? nowPlaying : s.ep.title,
-        artist: s.show.title,
+        title: ad && s.ad ? `Ad: ${s.ad.advertiser}` : s.ep.live && nowPlaying ? nowPlaying.song || nowPlaying.text : s.ep.title,
+        artist: s.ep.live && nowPlaying && nowPlaying.artist ? `${nowPlaying.artist} on ${s.show.title}` : s.show.title,
         album: "yappr",
-        artwork: art ? [{ src: art, sizes: "512x512" }] : [],
+        artwork: s.ep.live && nowPlaying && nowPlaying.art ? [{ src: nowPlaying.art, sizes: "512x512" }] : art ? [{ src: art, sizes: "512x512" }] : [],
       });
       ms.setActionHandler("play", () => H.current.playAudio());
       ms.setActionHandler("pause", () => audioRef.current && audioRef.current.pause());
@@ -720,7 +756,7 @@ export function PlayerProvider({ children }) {
     isFavShow, isFavEp, toggleFavShow, toggleFavEp, share, nextInQueue, playNext,
     isFavStation, toggleFavStation, playStation, medium, setMedium, videoOpen, setVideoOpen, notify: showToast,
     sleep, setSleep, upNext, addToQueue, removeFromQueue, playQueued, autoplay, setAutoplay,
-    castSupported, cast, nowPlaying, extras,
+    castSupported, cast, nowPlaying, songHistory, extras, playAt,
   };
 
   return (

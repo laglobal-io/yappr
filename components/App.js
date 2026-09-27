@@ -304,6 +304,7 @@ function StationTile({ st }) {
         <span className="station-art">
           <Art id={st.id} src={st.image} title={st.name} fit="contain" />
           <span className={`live-pill${on ? " on" : ""}`}>{on ? "Playing" : "Live"}</span>
+          {st.network ? <span className="net-badge">{st.network}</span> : null}
         </span>
         <b>{st.name}</b>
         <span className="tsub">{st.tags && st.tags.length ? st.tags.join(", ") : st.country}</span>

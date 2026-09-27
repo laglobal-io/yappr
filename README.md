@@ -139,9 +139,11 @@ npm run dev                  # open http://localhost:3000
 | `components/AuthProvider.js`, `components/Account.js` | Sign-in (email link or Google), the account menu, and the alerts switch. |
 | `app/api/cron/new-episodes`, `public/sw.js` | The scheduled new-episode check and the service worker that shows alerts. |
 | `supabase/schema.sql` | Database tables and security rules for favorites and alerts. |
-| `app/api/radio/local` | "Near you": popular stations within about 120 km, using Vercel's approximate city-level location for the visitor (never GPS). Only shown when browsing your own country. |
+| `app/api/radio/local` | "Near you": stations within about 120 km, using Vercel's approximate city-level location for the visitor (never GPS). iHeart, Audacy, Cumulus and Beasley stations rank first, then everyone by listens in the last 24 hours. Only shown when browsing your own country. |
+| `lib/networks.js` | How yappr spots iHeart, Audacy, Cumulus and Beasley stations (name, website or stream address). Best-effort; edit the patterns to add groups. |
+| `lib/icy.js` | Turns a station's raw "now playing" data into song, artist and album art, including iHeart's coded format, and skips ads and jingles. |
 | `app/api/radio/now` | The song or show a station is playing right now, read from the station's stream information. Not every station sends it. |
-| `app/api/extras` | An episode's chapters and transcript (JSON, WebVTT, SRT, HTML or text), fetched on the server because podcast hosts usually block browsers from loading them. |
+| `app/api/extras` | An episode's chapters and transcript, fetched on the server because podcast hosts usually block browsers from loading them. Chapters come from a published chapters file or, for MP3s, from inside the file itself (the format Apple Podcasts reads); only the first part of the file is downloaded. |
 | `app/api/geo`, `lib/countries.js` | Picks each visitor's country automatically (from Vercel's location header) as the default for Charts and Radio. |
 | `app/terms`, `app/privacy`, `app/submit` | Terms of use, privacy policy, and the "Get your podcast on yappr" page. |
 | `lib/site.js` | Your business name, state, contact email and "last updated" date used on the legal pages. |
@@ -152,7 +154,8 @@ Listening progress, "Keep listening", Up next and For You picks are saved in eac
 ## Listening features
 - **Up next and autoplay:** add any episode to Up next from its row. When an episode ends, yappr plays the next queued episode, or (with Autoplay on) the show's next episode.
 - **Sleep timer:** 15, 30, 45 or 60 minutes, or the end of the episode, with a gentle fade-out.
-- **Chapters and transcripts:** when a show publishes them, the Up next panel gets Chapters and Transcript tabs. Tap a line to jump there; the transcript follows along as you listen.
+- **Full player:** tap the play bar to open a big "Now playing" view with artwork, all controls and options, and tabs for Up next, Chapters, Transcript and About (or Song for live radio, with songs played earlier).
+- **Chapters and transcripts:** episodes with a chapters file show a Chapters button that lists them; tap one to start there. MP3 chapters are found as you play. Chapters also appear as marks on the progress bar and under the title. Transcripts follow along as you listen.
 - **Cast:** send audio to Chromecast speakers and TVs (Chrome) or AirPlay (Safari).
 - **Live radio extras:** "Near you" stations, and the current song or show in the play bar and on the lock screen. For You combines the vibes a listener picks with the categories of shows they've played.
 

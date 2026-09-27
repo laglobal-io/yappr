@@ -212,6 +212,15 @@ function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
   const fav = player.isFavEp(ep.id);
   const guests = ep.people.filter((p) => p.role !== "host").map((p) => p.name);
   const code = [ep.season ? `S${ep.season}` : "", ep.number ? `E${ep.number}` : ""].filter(Boolean).join(" ");
+  const [chap, setChap] = useState({ open: false, state: "idle", list: null });
+  const toggleChapters = () => {
+    if (chap.open) { setChap((c) => ({ ...c, open: false })); return; }
+    if (chap.list) { setChap((c) => ({ ...c, open: true })); return; }
+    setChap({ open: true, state: "loading", list: null });
+    fetch(`/api/extras?chapters=${encodeURIComponent(ep.chaptersUrl)}`).then((r) => r.json())
+      .then((d) => setChap({ open: true, state: "ok", list: d.chapters || [] }))
+      .catch(() => setChap({ open: true, state: "error", list: null }));
+  };
 
   let progress = null;
   if (now && player.phase === "content" && player.dur) progress = player.pos / player.dur;
@@ -235,12 +244,31 @@ function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
           {ep.published ? <span>{ago(ep.published)}</span> : null}
           {length(ep.duration) ? <span>{length(ep.duration)}</span> : null}
           {ep.explicit ? <span>Explicit</span> : null}
-          {ep.chaptersUrl ? <span>Chapters</span> : null}
+          {ep.chaptersUrl ? (
+            <button className="fact-btn" onClick={toggleChapters} aria-expanded={chap.open}>
+              <Icon name="queue" />{chap.list ? `${chap.list.length} chapters` : "Chapters"}
+            </button>
+          ) : null}
           {ep.transcript ? <span>Transcript</span> : null}
           {done ? <span className="done">Played</span> : resume && ep.duration && !now ? <span>{clock(ep.duration - resume)} left</span> : null}
           {guests.length ? <span>With {guests.slice(0, 2).join(" and ")}</span> : null}
         </div>
         {progress != null ? <span className="bar"><i style={{ width: `${Math.max(2, Math.min(100, progress * 100))}%` }} /></span> : null}
+        {chap.open ? (
+          chap.state === "loading" ? <p className="ep-ch-note">Loading chapters…</p>
+          : chap.state === "error" || !chap.list || !chap.list.length ? <p className="ep-ch-note">This episode's chapters couldn't be loaded.</p>
+          : (
+            <ol className="ep-chapters">
+              {chap.list.map((c, i) => (
+                <li key={i}>
+                  <button onClick={() => player.playAt(feed, ep, eps, c.start)}>
+                    <span className="ch-time">{clock(c.start)}</span><span>{c.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )
+        ) : null}
       </div>
       <div className="ep-actions">
         {(() => {

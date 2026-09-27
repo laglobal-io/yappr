@@ -1,4 +1,5 @@
 import { stationById } from "@/lib/radio";
+import { parseIcy } from "@/lib/icy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ const MAX_BYTES = 256 * 1024;
 
 export async function GET(request) {
   const id = new URL(request.url).searchParams.get("id") || "";
-  const none = () => Response.json({ title: null }, { headers: { "Cache-Control": "public, s-maxage=20" } });
+  const none = () => Response.json({ now: null }, { headers: { "Cache-Control": "public, s-maxage=20" } });
   if (!/^[0-9a-f-]{36}$/i.test(id)) return none();
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 5000);
@@ -37,12 +38,8 @@ export async function GET(request) {
           const raw = buf.slice(metaint + 1, metaint + 1 + len);
           let text = new TextDecoder("utf-8", { fatal: false }).decode(raw);
           if (text.includes("\uFFFD")) text = new TextDecoder("latin1").decode(raw);
-          const m = /StreamTitle='(.*?)';/s.exec(text);
-          const title = m ? m[1].trim() : "";
-          return Response.json(
-            { title: title && !/^(-|unknown|\s)*$/i.test(title) ? title.slice(0, 140) : null },
-            { headers: { "Cache-Control": "public, s-maxage=20" } }
-          );
+          const m = /StreamTitle='(.*?)';(?:\s*Stream|\s*$|\0)/s.exec(text) || /StreamTitle='(.*?)';/s.exec(text);
+          return Response.json({ now: m ? parseIcy(m[1]) : null }, { headers: { "Cache-Control": "public, s-maxage=20" } });
         }
       }
     }

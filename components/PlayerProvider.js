@@ -3,6 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { fetchVastAd, ping } from "@/lib/vast";
 import { loadStore, saveStore } from "@/lib/storage";
+import { useAuth } from "./AuthProvider";
+import VideoDock from "./VideoDock";
 
 const PlayerCtx = createContext(null);
 export const usePlayer = () => useContext(PlayerCtx);
@@ -43,11 +45,15 @@ function makeSilence() {
 }
 
 const slimShow = (s) => ({ id: s.id, title: s.title, author: s.author, image: s.image, categories: (s.categories || []).slice(0, 4) });
-const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live });
+const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live, isVideo: !!e.isVideo });
+const slimStation = (st) => ({ id: st.id, name: st.name, url: st.url, image: st.image, homepage: st.homepage, country: st.country, tags: st.tags || [] });
 const isAdPhase = (p) => p === "preroll" || p === "postroll";
 
 export function PlayerProvider({ children }) {
-  const audioRef = useRef(null);
+  const auth = useAuth();
+  const audioRef = useRef(null); // a <video> element: it plays audio files too, so one element handles everything
+  const [medium, setMediumState] = useState("listen"); // Watch / Listen preference, Listen by default
+  const [videoOpen, setVideoOpen] = useState(false);
   const st = useRef(IDLE);
   const [s, setS] = useState(IDLE);
   const storeRef = useRef(null);
@@ -79,9 +85,15 @@ export function PlayerProvider({ children }) {
 
   useEffect(() => {
     storeRef.current = loadStore();
+    if (storeRef.current.medium === "watch") setMediumState("watch");
     setStoreVersion((v) => v + 1);
     silenceRef.current = makeSilence();
   }, []);
+
+  const setMedium = useCallback((m) => {
+    setMediumState(m);
+    if (storeRef.current) { storeRef.current.medium = m; persist(true); }
+  }, [persist]);
 
   // Lets the UI change saved preferences (like For You vibes) and re-render.
   const updateStore = useCallback((fn) => {
@@ -165,6 +177,7 @@ export function PlayerProvider({ children }) {
     const resume = ep.live ? 0 : (storeRef.current && storeRef.current.resume[ep.id]) || 0;
     pendingSeekRef.current = resume;
     lastSaveRef.current = resume;
+    setVideoOpen(!!ep.isVideo && mediumRef.current === "watch");
     a.src = ep.audio;
     a.defaultPlaybackRate = rate;
     a.playbackRate = rate;
@@ -173,6 +186,7 @@ export function PlayerProvider({ children }) {
 
   const startAd = useCallback((ad, slot) => {
     const a = audioRef.current;
+    setVideoOpen(!!ad.isVideo && mediumRef.current === "watch");
     firedRef.current = new Set();
     adPausedRef.current = false;
     update({ phase: slot, slot, ad, pos: 0, dur: ad.duration || 0 });
@@ -267,25 +281,96 @@ export function PlayerProvider({ children }) {
   const isFavShow = useCallback((id) => !!(storeRef.current && storeRef.current.favShows && storeRef.current.favShows[id]), []);
   const isFavEp = useCallback((id) => !!(storeRef.current && storeRef.current.favEps && storeRef.current.favEps[id]), []);
 
+  // Signed in: mirror each favorite change to the account (fire and forget; local copy stays the source for the UI)
+  const syncFav = useCallback((kind, id, data) => {
+    const db = auth.supabase;
+    const user = auth.user;
+    if (!db || !user) return;
+    const q = data
+      ? db.from("favorites").upsert({ user_id: user.id, kind, item_id: String(id), data }, { onConflict: "user_id,kind,item_id" })
+      : db.from("favorites").delete().match({ user_id: user.id, kind, item_id: String(id) });
+    q.then(({ error }) => { if (error) console.warn("Favorite sync failed", error.message); });
+  }, [auth.supabase, auth.user]);
+
   const toggleFavShow = useCallback((show) => {
-    let added = false;
+    let row = null;
     updateStore((store) => {
       store.favShows = store.favShows || {};
       if (store.favShows[show.id]) delete store.favShows[show.id];
-      else { store.favShows[show.id] = { ...slimShow(show), savedAt: Date.now() }; added = true; }
+      else { row = { ...slimShow(show), savedAt: Date.now() }; store.favShows[show.id] = row; }
     });
-    showToast(added ? `Saved ${show.title} to favorites` : "Removed from favorites");
-  }, [updateStore, showToast]);
+    syncFav("show", show.id, row);
+    showToast(row ? `Saved ${show.title} to favorites` : "Removed from favorites");
+    return !!row;
+  }, [updateStore, showToast, syncFav]);
 
   const toggleFavEp = useCallback((show, ep) => {
-    let added = false;
+    let row = null;
     updateStore((store) => {
       store.favEps = store.favEps || {};
       if (store.favEps[ep.id]) delete store.favEps[ep.id];
-      else { store.favEps[ep.id] = { show: slimShow(show), ep: slimEp(ep), savedAt: Date.now() }; added = true; }
+      else { row = { show: slimShow(show), ep: slimEp(ep), savedAt: Date.now() }; store.favEps[ep.id] = row; }
     });
-    showToast(added ? "Episode saved to favorites" : "Removed from favorites");
-  }, [updateStore, showToast]);
+    syncFav("episode", ep.id, row);
+    showToast(row ? "Episode saved to favorites" : "Removed from favorites");
+  }, [updateStore, showToast, syncFav]);
+
+  const isFavStation = useCallback((id) => !!(storeRef.current && storeRef.current.favStations && storeRef.current.favStations[id]), []);
+  const toggleFavStation = useCallback((st) => {
+    let row = null;
+    updateStore((store) => {
+      store.favStations = store.favStations || {};
+      if (store.favStations[st.id]) delete store.favStations[st.id];
+      else { row = { ...slimStation(st), savedAt: Date.now() }; store.favStations[st.id] = row; }
+    });
+    syncFav("station", st.id, row);
+    showToast(row ? `Saved ${st.name} to favorites` : "Removed from favorites");
+  }, [updateStore, showToast, syncFav]);
+
+  // Tune in to a live station (shared by every LIVE view and favorites)
+  const playStation = useCallback((station) => {
+    const epId = `radio-${station.id}`;
+    if (st.current.ep && st.current.ep.id === epId) { H.current.toggle(); return; }
+    const show = { id: `radio:${station.id}`, title: station.name, author: station.country, image: station.image, categories: station.tags || [], website: station.homepage, station: slimStation(station) };
+    const ep = { id: epId, title: station.name, audio: station.url, duration: 0, image: station.image, published: 0, live: true };
+    updateStore((store) => {
+      store.recentStations = [slimStation(station), ...(store.recentStations || []).filter((x) => x.id !== station.id)].slice(0, 12);
+    });
+    H.current.play(show, ep, []);
+    // Radio Browser asks apps to report plays so popular stations rank well for everyone.
+    fetch(`https://de1.api.radio-browser.info/json/url/${encodeURIComponent(station.id)}`, { mode: "no-cors" }).catch(() => {});
+  }, [updateStore]);
+
+  // On sign-in: merge the account's favorites with this device's, then upload anything only saved locally
+  useEffect(() => {
+    const db = auth.supabase;
+    const user = auth.user;
+    if (!db || !user || !storeRef.current) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await db.from("favorites").select("kind,item_id,data");
+      if (cancelled || error) return;
+      const store = storeRef.current;
+      const maps = { show: "favShows", episode: "favEps", station: "favStations" };
+      const remote = new Set();
+      (data || []).forEach((r) => {
+        const key = maps[r.kind];
+        if (!key) return;
+        store[key] = store[key] || {};
+        store[key][r.item_id] = r.data;
+        remote.add(`${r.kind}:${r.item_id}`);
+      });
+      const upload = [];
+      Object.entries(maps).forEach(([kind, key]) => {
+        Object.entries(store[key] || {}).forEach(([id, row]) => {
+          if (!remote.has(`${kind}:${id}`)) upload.push({ user_id: user.id, kind, item_id: String(id), data: row });
+        });
+      });
+      if (upload.length) await db.from("favorites").upsert(upload, { onConflict: "user_id,kind,item_id" });
+      persist(true);
+    })();
+    return () => { cancelled = true; };
+  }, [auth.supabase, auth.user, persist]);
 
   const share = useCallback(async ({ title, text, url }) => {
     if (typeof navigator !== "undefined" && navigator.share) {
@@ -309,8 +394,10 @@ export function PlayerProvider({ children }) {
   }, [nextInQueue, play]);
 
   /* ---------- audio element events ---------- */
+  const mediumRef = useRef(medium);
+  mediumRef.current = medium;
   const H = useRef({});
-  H.current = { track, saveResume, startContent, runPostroll, finish, update, log, persist, showToast, toggle, seekBy, seekTo, playAudio };
+  H.current = { track, saveResume, startContent, runPostroll, finish, update, log, persist, showToast, toggle, seekBy, seekTo, playAudio, play };
 
   useEffect(() => {
     const a = audioRef.current;
@@ -427,12 +514,13 @@ export function PlayerProvider({ children }) {
     ...s, play, toggle, seekBy, seekTo, cycleRate, clickAd,
     logs, toast, store: storeRef.current, storeVersion, updateStore,
     isFavShow, isFavEp, toggleFavShow, toggleFavEp, share, nextInQueue, playNext,
+    isFavStation, toggleFavStation, playStation, medium, setMedium, videoOpen, setVideoOpen, notify: showToast,
   };
 
   return (
     <PlayerCtx.Provider value={value}>
       {children}
-      <audio ref={audioRef} preload="auto" />
+      <VideoDock mediaRef={audioRef} state={s} open={videoOpen} onHide={() => setVideoOpen(false)} />
     </PlayerCtx.Provider>
   );
 }

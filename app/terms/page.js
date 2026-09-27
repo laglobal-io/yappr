@@ -17,7 +17,7 @@ export default function Terms() {
         yappr helps you discover and play podcasts that creators publish openly through RSS feeds, and listen to live radio stations
         that stream publicly online. We don&rsquo;t host any audio: episodes stream directly from each show&rsquo;s hosting provider, and
         radio plays directly from each station. Show listings come from the Podcast Index, charts come
-        from Apple Podcasts, and live radio stations come from the Radio Browser directory. You don&rsquo;t need an account.
+        from Apple Podcasts, and live radio stations come from the Radio Browser directory. You don&rsquo;t need an account to listen. If you create one, keep your sign-in secure; you&rsquo;re responsible for activity on it, and we may close accounts that break these terms.
       </p>
 
       <h2>Podcasts belong to their creators</h2>

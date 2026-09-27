@@ -6,6 +6,9 @@ const brand = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-brand"
 export const metadata = {
   title: "yappr: every podcast, free",
   description: "Every Podcast. Every Creator. Search and listen to podcasts and live radio, free on yappr.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "yappr", statusBarStyle: "default" },
+  icons: { apple: "/apple-touch-icon.png" },
 };
 
 export const viewport = {

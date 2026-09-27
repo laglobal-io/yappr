@@ -26,6 +26,47 @@ Files starting with a dot (`.gitignore`, `.env.example`) can be hidden on Mac an
 
 To use your own domain (like yappr.fm), open the project in Vercel, then **Settings → Domains**.
 
+## Accounts and new-episode alerts (optional, about 20 minutes)
+
+Everything works without this. Once set up, a **Sign in** button appears: people can sign in with email or Google, their favorites sync across devices, and they can turn on alerts for new episodes from shows they've favorited.
+
+### 1. Create the database (Supabase, free)
+1. Sign up at https://supabase.com and create a new project. Save the database password somewhere safe.
+2. Open **SQL Editor → New query**, paste everything from `supabase/schema.sql`, and click **Run**.
+3. Open **Authentication → URL Configuration**. Set **Site URL** to your live address (for example `https://yappr.fm`). Under **Redirect URLs**, add `https://yappr.fm/**` and your Vercel address (for example `https://yappr.vercel.app/**`).
+4. Supabase's built-in email sender only allows a few emails per hour. Before launch, connect your own email service under **Authentication → Emails → SMTP settings** (Resend, Postmark and SendGrid all work).
+5. For **Continue with Google**: open **Authentication → Sign In / Providers → Google**, turn it on, and follow the link there to create a Google OAuth client. Paste the Client ID and Secret back into Supabase. You can skip this at first; email sign-in works on its own.
+
+### 2. Create the alert keys
+On a computer with Node.js installed, run this in the project folder:
+
+```bash
+node scripts/generate-vapid-keys.mjs
+```
+
+It prints two lines. Keep the private one secret.
+
+### 3. Add the settings to Vercel
+In Vercel → your project → **Settings → Environment Variables**, add these for **Production** (and Preview):
+
+| Name | Where it comes from |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Same page: the **anon** (or **publishable**) key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Same page: the **service_role** (or **secret**) key. Mark it as a Secret. |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | First line from the key generator |
+| `VAPID_PRIVATE_KEY` | Second line from the key generator |
+| `CRON_SECRET` | Any long random string (at least 16 characters) |
+
+Then **Redeploy**.
+
+### How alerts work
+- `vercel.json` schedules `/api/cron/new-episodes` once a day (14:00 UTC), which is the most Vercel's free plan allows. It checks every favorited show for a new episode and notifies fans who turned alerts on.
+- For hourly checks, upgrade to Vercel Pro and change the schedule to `0 * * * *`, or use a free service like cron-job.org to call `https://yourdomain/api/cron/new-episodes` with the header `Authorization: Bearer <your CRON_SECRET>`.
+- The first check for a show only records its latest episode, so nobody gets alerts for old episodes.
+- **iPhone:** web alerts only work after adding yappr to the Home Screen (Share → Add to Home Screen, iOS 16.4 or later). yappr explains this when someone tries to turn alerts on in Safari.
+- Supabase pauses free projects after about a week with no activity. Real traffic prevents this; otherwise upgrade or visit the dashboard occasionally.
+
 ## Ads
 
 The player runs **pre-roll → episode → post-roll**. Ads can't be skipped or scrubbed, and nothing plays mid-episode. If an ad is slow (over 2.5 seconds) or fails, the episode starts anyway.
@@ -77,14 +118,19 @@ npm run dev                  # open http://localhost:3000
 | `components/ShowPanel.js` | The expanded show view: host, categories, episode count, website, support link, and the episode list with play, favorite and share. |
 | `components/Player.js` | The now-playing bar at the bottom of the screen, plus the ad debug panel. |
 | `app/show/[id]` | Shareable links for shows and episodes (`/show/123` or `/show/123?ep=456`), with previews for iMessage, WhatsApp, X and Slack. |
-| `app/api/charts`, `app/api/rising` | Charts: Apple's top 50 for any of 24 countries, and "Rising" (fastest-climbing shows by language, from Podcast Index). |
+| `app/api/charts`, `app/api/rising` | Top: Apple's top 50 for any of 24 countries. With a genre picked, it filters Apple's top 100 to that genre (Apple has no public per-genre charts). Rising: fastest-climbing shows by language and genre, from Podcast Index. |
 | `app/api/radio`, `lib/radio.js` | Live radio from the free Radio Browser directory, by country, genre, popular or rising. Only https streams that browsers can play are listed. |
+| `app/api/video` | The video catalog (shows tagged as video in Podcast Index) ranked for Watch mode: fresh, top and rising. |
+| `components/VideoDock.js` | The floating video window, with a bigger theater view and picture-in-picture. |
+| `components/AuthProvider.js`, `components/Account.js` | Sign-in (email link or Google), the account menu, and the alerts switch. |
+| `app/api/cron/new-episodes`, `public/sw.js` | The scheduled new-episode check and the service worker that shows alerts. |
+| `supabase/schema.sql` | Database tables and security rules for favorites and alerts. |
 | `app/api/geo`, `lib/countries.js` | Picks each visitor's country automatically (from Vercel's location header) as the default for Charts and Radio. |
 | `app/terms`, `app/privacy`, `app/submit` | Terms of use, privacy policy, and the "Get your podcast on yappr" page. |
 | `lib/site.js` | Your business name, state, contact email and "last updated" date used on the legal pages. |
 | `app/globals.css` | All styling, including light and dark themes. |
 
-Listening progress, favorites, "Keep listening" and For You picks are saved in each visitor's browser; there are no accounts yet. For You combines the vibes a listener picks with the categories of shows they've played.
+Listening progress, "Keep listening" and For You picks are saved in each visitor's browser. Favorites are too, and they also sync to the visitor's account when they sign in. For You combines the vibes a listener picks with the categories of shows they've played.
 
 ## Before you go big
 

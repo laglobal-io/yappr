@@ -8,15 +8,27 @@ export default function Privacy() {
   return (
     <LegalPage title="Privacy" updated={SITE.updated}>
       <p>
-        yappr is built to need as little of your information as possible. There are no accounts, and we don&rsquo;t ask for your name
-        or email to listen. This page explains what data is involved when you use yappr and who handles it.
+        yappr is built to need as little of your information as possible. You can listen without an account, and we only ask for your
+        email if you choose to sign in. This page explains what data is involved when you use yappr and who handles it.
       </p>
 
       <h2>Stored only on your device</h2>
       <p>
-        Your listening progress, recently played episodes, the vibes you pick for For You, and your light or dark theme are saved in
-        your own browser&rsquo;s storage. They aren&rsquo;t sent to us. Clearing your browser&rsquo;s site data for yappr erases them.
+        Your listening progress, recently played episodes and stations, your For You picks, and your theme are saved in your own
+        browser&rsquo;s storage and aren&rsquo;t sent to us. Favorites are saved here too, and also to your account if you sign in. Clearing your browser&rsquo;s site data for yappr erases them.
       </p>
+
+      <h2>If you sign in</h2>
+      <p>
+        Signing in is optional. If you do, we store your email address (and your name and profile photo if you use Google), plus the
+        shows, episodes and stations you favorite, so they&rsquo;re available on every device. Accounts are run by our database and
+        authentication provider, Supabase, on our behalf.
+      </p>
+      <p>
+        If you turn on new-episode alerts, we also store a push notification address for your browser. We use it only to tell you when
+        a show you favorited posts a new episode. Turning alerts off or signing out removes it from this device.
+      </p>
+      <p>To delete your account and everything linked to it, email {mail} from the address you signed in with.</p>
 
       <h2>What reaches our servers</h2>
       <p>

@@ -46,7 +46,8 @@ export function NowBar({ onOpenShow }) {
   const bars = progress(p);
   const mainPct = drag != null ? drag / 10 : bars.main;
   const shownPos = drag != null ? (drag / 1000) * p.dur : p.pos;
-  const fav = p.isFavEp(p.ep.id);
+  const fav = live && p.show.station ? p.isFavStation(p.show.station.id) : p.isFavEp(p.ep.id);
+  const toggleFav = () => (live && p.show.station ? p.toggleFavStation(p.show.station) : p.toggleFavEp(p.show, p.ep));
   const next = p.phase === "done" ? p.nextInQueue() : null;
   const label = p.phase === "done" ? "Play again" : p.playing ? "Pause" : "Play";
   const commit = (v) => { p.seekTo((Number(v) / 1000) * p.dur); setDrag(null); };
@@ -107,7 +108,12 @@ export function NowBar({ onOpenShow }) {
           <button className="pill-btn next-btn" onClick={p.playNext}><Icon name="next" /> Next episode</button>
         ) : null}
         {!live ? <button className="pill-btn ghost nb-speed" onClick={p.cycleRate} disabled={!content} aria-label={`Playback speed ${p.rate}x`}>{p.rate}×</button> : null}
-        <button className={`round-btn${fav ? " on" : ""}`} aria-pressed={fav} onClick={() => p.toggleFavEp(p.show, p.ep)} aria-label={fav ? "Remove episode from favorites" : "Save episode to favorites"}>
+        {p.ep.isVideo && p.phase === "content" ? (
+          <button className={`pill-btn${p.videoOpen ? " ghost" : ""}`} onClick={() => p.setVideoOpen(!p.videoOpen)} aria-pressed={p.videoOpen}>
+            <Icon name="video" /> {p.videoOpen ? "Hide video" : "Watch"}
+          </button>
+        ) : null}
+        <button className={`round-btn${fav ? " on" : ""}`} aria-pressed={fav} onClick={toggleFav} aria-label={fav ? "Remove from favorites" : "Save to favorites"}>
           <Icon name={fav ? "heartFill" : "heart"} />
         </button>
         <button className="round-btn" onClick={() => p.share(live

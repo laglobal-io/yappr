@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePlayer } from "./PlayerProvider";
+import { useAuth } from "./AuthProvider";
 import Art from "./Art";
 import Icon from "./Icon";
 import { ago, clock, length } from "@/lib/format";
@@ -21,9 +22,11 @@ function languageName(code) {
 // showKey is "pi:<Podcast Index id>" or "it:<Apple id>" (from Charts).
 export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) {
   const player = usePlayer();
+  const auth = useAuth();
   const [data, setData] = useState({ state: "loading" });
   const [count, setCount] = useState(PAGE);
   const [more, setMore] = useState(false);
+  const [nudge, setNudge] = useState(false);
   const rootRef = useRef(null);
   const closeRef = useRef(null);
 
@@ -79,6 +82,9 @@ export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) 
   } else {
     const fav = player.isFavShow(feed.id);
     const lang = languageName(feed.language);
+    const hasVideo = feed.medium === "video" || eps.some((e) => e.isVideo);
+    const hasAudio = eps.some((e) => !e.isVideo);
+    const format = hasVideo && hasAudio ? "Watch + Listen" : hasVideo ? "Watch" : "Listen";
     const longDesc = feed.description && feed.description.length > 220;
     const facts = [
       feed.episodeCount ? `${feed.episodeCount.toLocaleString()} episodes` : eps.length ? `${eps.length} episodes` : "",
@@ -94,6 +100,7 @@ export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) 
             <div className="badges">
               {feed.categories.slice(0, 3).map((c) => <span key={c} className="badge">{c}</span>)}
               {feed.explicit ? <span className="badge warn">Explicit</span> : null}
+              <span className={`badge fmt${hasVideo ? " video" : ""}`}><Icon name={hasVideo ? "video" : "headphones"} />{format}</span>
             </div>
             <h2 id={`panel-title-${feed.id}`}>{feed.title}</h2>
             {feed.author ? <p className="host">Hosted by {feed.author}</p> : null}
@@ -105,7 +112,7 @@ export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) 
                   Play latest
                 </button>
               ) : null}
-              <button className={`round-btn${fav ? " on" : ""}`} aria-pressed={fav} onClick={() => player.toggleFavShow(feed)} aria-label={fav ? "Remove show from favorites" : "Save show to favorites"}>
+              <button className={`round-btn${fav ? " on" : ""}`} aria-pressed={fav} onClick={() => { const added = player.toggleFavShow(feed); if (added && auth.enabled && auth.user && auth.alerts === "off") setNudge(true); }} aria-label={fav ? "Remove show from favorites" : "Save show to favorites"}>
                 <Icon name={fav ? "heartFill" : "heart"} />
               </button>
               <button className="round-btn" onClick={() => player.share({ title: feed.title, text: `Listen to ${feed.title} on yappr`, url: showUrl(feed.id) })} aria-label="Share show">
@@ -122,6 +129,7 @@ export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) 
                 </a>
               ) : null}
             </div>
+            {fav && auth.enabled ? <AlertNudge auth={auth} player={player} show={nudge} /> : null}
           </div>
         </div>
 
@@ -171,6 +179,30 @@ export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) 
   );
 }
 
+// After favoriting: nudge toward signing in, or toward turning on new-episode alerts
+function AlertNudge({ auth, player }) {
+  if (!auth.user) {
+    return (
+      <p className="nudge">
+        <Icon name="bell" />
+        <span>Want to know when new episodes drop? <button className="text-btn" onClick={() => auth.setMenuOpen(true)}>Sign in for alerts</button></span>
+      </p>
+    );
+  }
+  if (auth.alerts === "on") return <p className="nudge quiet"><Icon name="bell" /><span>Alerts are on. We'll let you know when this show posts.</span></p>;
+  if (auth.alerts === "blocked" || auth.alerts === "unsupported") return null;
+  const turnOn = async () => {
+    try { await auth.turnOnAlerts(); player.notify("Alerts on. We'll ping you about new episodes."); }
+    catch (err) { player.notify(err.message); }
+  };
+  return (
+    <p className="nudge">
+      <Icon name="bell" />
+      <span>Get a heads-up when this show posts. <button className="text-btn" onClick={turnOn} disabled={auth.alerts === "working"}>Turn on alerts</button></span>
+    </p>
+  );
+}
+
 function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
   const player = usePlayer();
   const now = player.ep && player.ep.id === ep.id;
@@ -198,6 +230,7 @@ function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
         <b>{ep.title}</b>
         {ep.description ? <p>{ep.description}</p> : null}
         <div className="facts">
+          {ep.isVideo ? <span className="vid-tag"><Icon name="video" />Video</span> : null}
           {code ? <span>{code}</span> : null}
           {ep.published ? <span>{ago(ep.published)}</span> : null}
           {length(ep.duration) ? <span>{length(ep.duration)}</span> : null}

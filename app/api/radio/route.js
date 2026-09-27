@@ -1,4 +1,5 @@
 import { stations } from "@/lib/radio";
+import { somaChannels } from "@/lib/somafm";
 import { json, fail } from "@/lib/podcastindex";
 
 export const runtime = "nodejs";
@@ -19,7 +20,14 @@ export async function GET(request) {
     const name = (sp.get("q") || "").trim().slice(0, 60);
     // Searching by name looks worldwide; browsing stays in the chosen country
     const list = await stations({ country: !name && /^[a-z]{2}$/.test(country) ? country : "", tags, order, name });
-    return json({ stations: list }, 600);
+    // Searching by name also looks through SomaFM's channels
+    let soma = [];
+    if (name) {
+      const q = name.toLowerCase();
+      soma = (await somaChannels().catch(() => [])).filter((c) => c.name.toLowerCase().includes(q) || c.tags.some((t) => t.includes(q)))
+        .map(({ lastPlaying, ...c }) => c).slice(0, 8);
+    }
+    return json({ stations: [...soma, ...list] }, 600);
   } catch (err) {
     return fail(err);
   }

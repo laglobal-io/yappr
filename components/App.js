@@ -41,25 +41,28 @@ const MODES = [
   { id: "video", label: "Video", icon: "video" },
   { id: "live", label: "Live" },
 ];
-const VIEWS = ["home", "search", "library"];
+const VIEWS = ["home", "explore", "search", "library"];
+// Evergreen topics for browsing when nothing's trending in a category you care about
+const BROWSE_TOPICS = ["AI", "Politics", "Economy", "Climate", "Space", "Crypto", "Startups", "NFL", "NBA", "Soccer", "Movies", "Music", "Mental Health", "Parenting", "Fitness", "True Crime", "History", "Science"];
 const SHELF_MAX = 12;
 
 /* ---------- app ---------- */
 
-export default function App({ initialShow = null, initialEp = null }) {
+export default function App({ initialShow = null, initialEp = null, initialTopic = null }) {
   return (
     <AuthProvider>
       <PlayerProvider>
-        <Shell initialShow={initialShow} initialEp={initialEp} />
+        <Shell initialShow={initialShow} initialEp={initialEp} initialTopic={initialTopic} />
       </PlayerProvider>
     </AuthProvider>
   );
 }
 
-function Shell({ initialShow, initialEp }) {
+function Shell({ initialShow, initialEp, initialTopic }) {
   const player = usePlayer();
   const auth = useAuth();
-  const [view, setView] = useState("home"); // home | search | library | list
+  const [view, setView] = useState(initialTopic ? "topic" : "home"); // home | explore | topic | search | library | list
+  const [topic, setTopic] = useState(initialTopic);
   const [list, setList] = useState(null); // the "See all" page
   const [mode, setModeState] = useState("podcasts");
   const [genre, setGenre] = useState("All");
@@ -90,7 +93,9 @@ function Shell({ initialShow, initialEp }) {
   }, [storeReady]);
 
   const setHash = (h) => {
-    try { window.history.replaceState(null, "", window.location.pathname + window.location.search + (h ? `#${h}` : "")); } catch { /* ignore */ }
+    // Leaving a topic page (/topic/...) goes back to the main address
+    const path = window.location.pathname.startsWith("/topic/") ? "/" : window.location.pathname;
+    try { window.history.replaceState(null, "", path + window.location.search + (h ? `#${h}` : "")); } catch { /* ignore */ }
   };
   const nav = useCallback((v) => {
     setView(v);
@@ -128,6 +133,24 @@ function Shell({ initialShow, initialEp }) {
   useEffect(() => {
     if (open && open.origin === "top" && topRef.current) topRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [open]);
+
+  // Topic pages have their own address (/topic/AI) so they can be shared and found in search engines
+  const openTopic = useCallback((q) => {
+    setTopic(q);
+    setView("topic");
+    setOpen(null);
+    try { window.history.pushState({ topic: q }, "", `/topic/${encodeURIComponent(q)}`); } catch { /* ignore */ }
+    window.scrollTo({ top: 0 });
+  }, []);
+  useEffect(() => {
+    const onPop = () => {
+      const m = window.location.pathname.match(/^\/topic\/(.+)$/);
+      if (m) { setTopic(decodeURIComponent(m[1])); setView("topic"); }
+      else setView((v) => (v === "topic" ? "explore" : v));
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const seeAll = useCallback((def) => {
     setList(def);
@@ -171,7 +194,7 @@ function Shell({ initialShow, initialEp }) {
   };
 
   const firstVisit = !!store && !auth.user && !store.recent.length && !Object.keys(store.favShows || {}).length && !(store.recentStations || []).length;
-  const activeNav = view === "list" ? "home" : view;
+  const activeNav = view === "list" ? "home" : view === "topic" ? "explore" : view;
 
   return (
     <>
@@ -204,10 +227,14 @@ function Shell({ initialShow, initialEp }) {
             mode={mode} setMode={setMode} genre={genre} setGenre={setGenre}
             country={country} setCountry={setCountry} panel={panel} seeAll={seeAll} firstVisit={firstVisit}
           />
+        ) : view === "explore" ? (
+          <ExploreView openTopic={openTopic} panel={panel} country={country} />
+        ) : view === "topic" ? (
+          <TopicView q={topic} openTopic={openTopic} panel={panel} country={country} onBack={() => nav("explore")} />
         ) : view === "search" ? (
           <SearchView mode={mode} panel={panel} />
         ) : view === "library" ? (
-          <Library panel={panel} seeAll={seeAll} nav={nav} />
+          <Library panel={panel} seeAll={seeAll} nav={nav} openTopic={openTopic} />
         ) : (
           <ListView def={list} panel={panel} onBack={() => nav("home")} />
         )}
@@ -227,6 +254,7 @@ function Shell({ initialShow, initialEp }) {
 function NavButtons({ active, nav }) {
   const items = [
     { id: "home", label: "Home", icon: "home" },
+    { id: "explore", label: "Explore", icon: "compass" },
     { id: "search", label: "Search", icon: "search" },
     { id: "library", label: "Library", icon: "library" },
   ];
@@ -247,7 +275,7 @@ function useFeed(url) {
     const ac = new AbortController();
     setData((d) => ({ ...d, state: "loading" }));
     getJSON(url, ac.signal)
-      .then((d) => setData({ state: "ok", feeds: d.feeds || [], shows: d.shows || [], stations: d.stations || [], episodes: d.episodes || [], basis: d.basis, note: d.note }))
+      .then((d) => setData({ state: "ok", feeds: d.feeds || [], shows: d.shows || [], stations: d.stations || [], episodes: d.episodes || [], basis: d.basis, note: d.note, raw: d }))
       .catch((err) => { if (err.name !== "AbortError") setData({ state: "error", feeds: [], shows: [], stations: [], episodes: [], error: err.message }); });
     return () => ac.abort();
   }, [url]);
@@ -595,6 +623,9 @@ function LiveHome({ genre, country, setCountry, seeAll }) {
           emptyText="No stations for this mix. Try another genre."
           onSeeAll={() => seeAll({ title: r.plain || r.title, kind: "stations", url, pick: "stations" })} />;
       })}
+      <FeedShelf id="lsoma" url={`/api/radio/soma${gg.tag ? `?tag=${encodeURIComponent(gg.tag)}` : ""}`} pick="stations" kind="stations"
+        title={gg.tag ? `Commercial-free ${g}` : "Commercial-free"}
+        onSeeAll={() => seeAll({ title: "Commercial-free radio from SomaFM", kind: "stations", url: `/api/radio/soma${gg.tag ? `?tag=${encodeURIComponent(gg.tag)}` : ""}`, pick: "stations" })} />
       {base && forYouTags.length ? (
         <FeedShelf id="lforyou" url={`/api/radio?country=${country}&tags=${encodeURIComponent(forYouTags.join(","))}&order=trending`} pick="stations" kind="stations"
           title="Stations for you" note={`Because you like ${forYouTags.map((t) => (GENRES.find((x) => x.tag === t) || { label: t }).label.toLowerCase()).join(", ")}`} />
@@ -725,6 +756,7 @@ function StationGrid({ data, emptyText }) {
 /* ---------- Search ---------- */
 
 function SearchView({ mode, panel }) {
+  const player = usePlayer();
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState(mode === "live" ? "stations" : "shows");
   const [results, setResults] = useState({ state: "idle", feeds: [], stations: [] });
@@ -742,7 +774,7 @@ function SearchView({ mode, panel }) {
           const d = await getJSON(`/api/radio?q=${encodeURIComponent(q)}`, ac.signal);
           setResults({ state: "ok", feeds: [], stations: d.stations || [] });
         } else {
-          const d = await getJSON(`/api/search?q=${encodeURIComponent(q)}`, ac.signal);
+          const d = await getJSON(`/api/search?q=${encodeURIComponent(q)}&country=${(player.store && player.store.country) || "us"}`, ac.signal);
           let feeds = d.feeds || [];
           if (mode === "video") feeds = [...feeds].sort((a, b) => (b.medium === "video") - (a.medium === "video"));
           setResults({ state: "ok", feeds, stations: [] });
@@ -789,7 +821,8 @@ function SearchView({ mode, panel }) {
 
 /* ---------- Library ---------- */
 
-function Library({ panel, seeAll, nav }) {
+function Library({ panel, seeAll, nav, openTopic }) {
+  const openTopicFromLib = (q) => openTopic && openTopic(q);
   const player = usePlayer();
   const p = usePersonal();
   const following = useFollowing();
@@ -800,7 +833,7 @@ function Library({ panel, seeAll, nav }) {
   const newIds = new Set(following.items.filter((it) => it.ep.published > weekAgo && !store.played[it.ep.id]).map((it) => String(it.show.id)));
   const saved = Object.values(store.favEps || {}).filter((r) => !r.ep.live).sort((a, b) => b.savedAt - a.savedAt);
   const history = store.recent.filter((r) => !r.ep.live);
-  const empty = !p.favShows.length && !saved.length && !p.favStations.length && !history.length && !p.stations.length;
+  const empty = !Object.keys(store.topics || {}).length && !p.favShows.length && !saved.length && !p.favStations.length && !history.length && !p.stations.length;
 
   const clearHistory = () => {
     player.updateStore((s) => { s.recent = []; s.recentStations = []; });
@@ -817,6 +850,13 @@ function Library({ panel, seeAll, nav }) {
           <b>Your library starts here.</b>
           Tap the heart on shows, episodes and stations you love, and they'll live here.
           <div className="center"><button className="cta" onClick={() => nav("home")}>Find something to play</button></div>
+        </div>
+      ) : null}
+
+      {Object.keys(store.topics || {}).length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>Topics</h2><span className="count">{Object.keys(store.topics).length}</span></div>
+          <TopicChips topics={Object.values(store.topics).map((t) => ({ topic: t.topic }))} onOpen={openTopicFromLib} />
         </div>
       ) : null}
 
@@ -863,6 +903,156 @@ function Library({ panel, seeAll, nav }) {
               <div className="shelf-row lib-stations">{p.stations.slice(0, 8).map((st) => <StationTile key={st.id} st={st} />)}</div>
             </>
           ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+
+/* ---------- Explore and topics ---------- */
+
+function TopicChips({ topics, onOpen }) {
+  return (
+    <div className="chips topic-chips">
+      {topics.map((t) => (
+        <button key={t.topic} className={`chip${t.rising ? " rising" : ""}`} onClick={() => onOpen(t.topic)}>
+          {t.rising ? <Icon name="trend" /> : null}{t.topic}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ExploreView({ openTopic, panel, country }) {
+  const player = usePlayer();
+  const lang = findCountry(country).lang;
+  const data = useFeed(country ? `/api/explore?lang=${lang}` : null);
+  const d = data.raw || {};
+  const topics = d.topics || [];
+  const followed = Object.values((player.store && player.store.topics) || {});
+  const big = topics.slice(0, 4);
+
+  return (
+    <section className="sec explore">
+      <h1 className="view-h">Explore</h1>
+      <p className="sec-note">What podcasts are talking about right now.</p>
+
+      {followed.length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>Topics you follow</h2></div>
+          <TopicChips topics={followed.map((t) => ({ topic: t.topic }))} onOpen={openTopic} />
+        </div>
+      ) : null}
+
+      {data.state === "error" ? <div className="empty" role="alert"><b>Explore didn't load.</b>{data.error}</div> : null}
+
+      <div className="lib-sec">
+        <div className="lib-head"><h2>Trending topics</h2></div>
+        {data.state === "loading" && !topics.length ? (
+          <div className="chips">{Array.from({ length: 10 }).map((_, i) => <span key={i} className="chip skel" style={{ width: 80 + (i % 3) * 30 }}>&nbsp;</span>)}</div>
+        ) : topics.length ? (
+          <TopicChips topics={topics.slice(0, 18)} onOpen={openTopic} />
+        ) : data.state === "ok" ? <p className="q-empty">Nothing is trending across enough shows yet. Try a topic below.</p> : null}
+      </div>
+
+      {big.length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>Big stories</h2></div>
+          <div className="story-grid">
+            {big.map((t) => (
+              <button key={t.topic} className="story-card" onClick={() => openTopic(t.topic)}>
+                {t.rising ? <span className="rise-pill"><Icon name="trend" />Rising</span> : null}
+                <b>{t.topic}</b>
+                <span>{t.shows} shows talking about it{t.recentShows ? `, ${t.recentShows} in the last 12 hours` : ""}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {(d.news || []).length ? (
+        <div className="lib-sec">
+          <div className="lib-head">
+            <h2>Catch up on the news</h2>
+            <button className="see-all play-all" onClick={() => player.playAll(d.news)}><Icon name="play" />Play all</button>
+          </div>
+          <div className="shelf-row wide">{d.news.map((it) => <EpisodeCard key={it.ep.id} show={it.show} ep={it.ep} onPlay={panel.onPlay} />)}</div>
+        </div>
+      ) : null}
+
+      {(d.fresh || []).length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>Fresh from popular shows</h2></div>
+          <div className="shelf-row wide">{d.fresh.map((it) => <EpisodeCard key={it.ep.id} show={it.show} ep={it.ep} onPlay={panel.onPlay} />)}</div>
+        </div>
+      ) : null}
+
+      <div className="lib-sec">
+        <div className="lib-head"><h2>Browse topics</h2></div>
+        <TopicChips topics={BROWSE_TOPICS.map((t) => ({ topic: t }))} onOpen={openTopic} />
+      </div>
+    </section>
+  );
+}
+
+function TopicView({ q, openTopic, panel, country, onBack }) {
+  const player = usePlayer();
+  const [more, setMore] = useState(false);
+  const lang = findCountry(country).lang;
+  const data = useFeed(q && country ? `/api/topic?q=${encodeURIComponent(q)}&lang=${lang}&country=${country}` : null);
+  const d = data.raw || {};
+  const eps = d.episodes || [];
+  const following = player.isTopicFollowed(q);
+  useEffect(() => { setMore(false); }, [q]);
+  if (!q) return null;
+
+  return (
+    <section className="sec topic-view">
+      <div className="list-head">
+        <button className="icon-btn" onClick={onBack} aria-label="Back to Explore"><Icon name="back" /></button>
+        <div className="topic-title">
+          <h1>{q}</h1>
+          {data.state === "ok" ? <p>{eps.length ? `${eps.length} recent episodes from ${d.showCount || eps.length} shows` : "No recent episodes yet"}</p> : null}
+        </div>
+      </div>
+      <div className="topic-actions">
+        <button className={`pill-btn${following ? " ghost" : ""}`} onClick={() => player.toggleTopic(q)} aria-pressed={following}>
+          <Icon name={following ? "bell" : "plus"} />{following ? "Following" : "Follow topic"}
+        </button>
+        {eps.length ? <button className="cta" onClick={() => player.playAll(eps.slice(0, 5))}><Icon name="play" />Play the latest</button> : null}
+        <button className="round-btn" onClick={() => player.share({ title: `${q} on yappr`, text: `What podcasts are saying about ${q}`, url: `${window.location.origin}/topic/${encodeURIComponent(q)}` })} aria-label="Share topic"><Icon name="share" /></button>
+      </div>
+
+      {data.state === "error" ? <div className="empty" role="alert"><b>This topic didn't load.</b>{data.error}</div> : null}
+      {data.state === "loading" && !eps.length ? <div className="list" aria-busy="true">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="row skel" style={{ height: 92 }} />)}</div> : null}
+
+      {eps.length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>Latest episodes</h2></div>
+          <div className="list">{eps.slice(0, more ? 40 : 8).map((it) => <EpisodeCard key={it.ep.id} show={it.show} ep={it.ep} onPlay={panel.onPlay} />)}</div>
+          {eps.length > 8 && !more ? <div className="center"><button className="pill-btn ghost more-btn" onClick={() => setMore(true)}>Show more episodes</button></div> : null}
+        </div>
+      ) : data.state === "ok" ? <div className="empty">No episodes mention {q} in the last few weeks. Try a related topic, or follow it to hear when one does.</div> : null}
+
+      {(d.shows || []).length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>Shows about {q}</h2></div>
+          <ShowGrid gridId="topic-shows" data={{ state: "ok", feeds: d.shows }} {...panel} emptyText="" />
+        </div>
+      ) : null}
+
+      {(d.live || []).length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>{d.liveTitle || "Live now"}</h2></div>
+          <div className="shelf-row">{d.live.map((st) => <StationTile key={st.id} st={st} />)}</div>
+        </div>
+      ) : null}
+
+      {(d.related || []).length ? (
+        <div className="lib-sec">
+          <div className="lib-head"><h2>Related topics</h2></div>
+          <TopicChips topics={d.related.map((t) => ({ topic: t }))} onOpen={openTopic} />
         </div>
       ) : null}
     </section>

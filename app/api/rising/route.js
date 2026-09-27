@@ -1,4 +1,5 @@
 import { pi, feedOut, json, fail } from "@/lib/podcastindex";
+import { podcastOk, dedupeShows } from "@/lib/quality";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ export async function GET(request) {
     const cat = (sp.get("cat") || "").replace(/[^A-Za-z &,-]/g, "").slice(0, 80);
     const since = Math.floor(Date.now() / 1000) - 3 * 86400;
     const data = await pi("/podcasts/trending", { max: 50, lang, since, cat });
-    const shows = (data.feeds || []).map((f, i) => ({ rank: i + 1, ...feedOut(f) }));
+    const shows = dedupeShows((data.feeds || []).map(feedOut).filter(podcastOk)).map((f, i) => ({ ...f, rank: i + 1 }));
     return json({ shows }, 900);
   } catch (err) {
     return fail(err);

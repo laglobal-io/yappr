@@ -53,3 +53,7 @@ drop policy if exists "Own playback" on public.playback;
 create policy "Own playback" on public.playback
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create index if not exists playback_recent on public.playback (user_id, updated_at desc);
+
+-- Followed topics are stored as favorites with kind = 'topic' (added after the first release)
+alter table public.favorites drop constraint if exists favorites_kind_check;
+alter table public.favorites add constraint favorites_kind_check check (kind in ('show', 'episode', 'station', 'topic'));

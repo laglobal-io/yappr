@@ -35,9 +35,8 @@ export async function GET(request) {
     shows.set(f.item_id, s);
   }
   const ids = [...shows.keys()].slice(0, 500);
-  if (!ids.length) return Response.json({ checked: 0, newEpisodes: 0, sent: 0 });
 
-  const { data: states } = await db.from("feed_state").select("feed_id,last_episode_id,last_published").in("feed_id", ids);
+  const { data: states } = ids.length ? await db.from("feed_state").select("feed_id,last_episode_id,last_published").in("feed_id", ids) : { data: [] };
   const known = new Map((states || []).map((s) => [s.feed_id, s]));
 
   // 2. Latest episode for each show (a few at a time to be kind to the API)
@@ -81,5 +80,49 @@ export async function GET(request) {
       }
     }
   }
-  return Response.json({ checked: ids.length, newEpisodes: fresh.length, sent });
+  // 4. Followed topics: the newest episode that mentions each topic, since last time
+  const { data: topicFavs } = await db.from("favorites").select("user_id,item_id,data").eq("kind", "topic");
+  const topics = new Map();
+  for (const f of topicFavs || []) {
+    const t = topics.get(f.item_id) || { label: (f.data && f.data.topic) || f.item_id, users: new Set() };
+    t.users.add(f.user_id);
+    topics.set(f.item_id, t);
+  }
+  const topicKeys = [...topics.keys()].slice(0, 150);
+  let topicAlerts = 0;
+  if (topicKeys.length) {
+    const stateIds = topicKeys.map((k) => `topic:${k}`);
+    const { data: tStates } = await db.from("feed_state").select("feed_id,last_episode_id,last_published").in("feed_id", stateIds);
+    const tKnown = new Map((tStates || []).map((x) => [x.feed_id, x]));
+    const tUpdates = [];
+    for (let i = 0; i < topicKeys.length; i += 5) {
+      await Promise.all(topicKeys.slice(i, i + 5).map(async (key) => {
+        try {
+          const d = await pi("/search/byperson", { q: topics.get(key).label, max: 50 });
+          const item = (d.items || []).filter((x) => x.enclosureUrl && `${x.title} ${x.description || ""}`.toLowerCase().includes(key))
+            .sort((a, b) => b.datePublished - a.datePublished)[0];
+          if (!item) return;
+          const sid = `topic:${key}`;
+          const prev = tKnown.get(sid);
+          tUpdates.push({ feed_id: sid, last_episode_id: String(item.id), last_published: item.datePublished || 0, checked_at: new Date().toISOString() });
+          if (!prev || !(item.datePublished > prev.last_published) || String(item.id) === prev.last_episode_id) return;
+          const { data: subs } = await db.from("push_subscriptions").select("endpoint,keys").in("user_id", [...topics.get(key).users]);
+          const payload = JSON.stringify({
+            title: `New on ${topics.get(key).label}`,
+            body: `${strip(item.title, 100)}${item.feedTitle ? ` (${strip(item.feedTitle, 40)})` : ""}`,
+            url: `/show/${item.feedId}?ep=${item.id}`,
+            icon: "/icon-192.png",
+            tag: `topic-${key}`,
+          });
+          for (const sub of subs || []) {
+            try { await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload); topicAlerts++; }
+            catch (err) { if (err && (err.statusCode === 404 || err.statusCode === 410)) await db.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); }
+          }
+        } catch { /* skip this topic this round */ }
+      }));
+    }
+    if (tUpdates.length) await db.from("feed_state").upsert(tUpdates, { onConflict: "feed_id" });
+  }
+
+  return Response.json({ checked: ids.length, newEpisodes: fresh.length, sent, topics: topicKeys.length, topicAlerts });
 }

@@ -1,5 +1,6 @@
 import { stationById } from "@/lib/radio";
 import { parseIcy } from "@/lib/icy";
+import { somaChannels } from "@/lib/somafm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +13,13 @@ const MAX_BYTES = 256 * 1024;
 export async function GET(request) {
   const id = new URL(request.url).searchParams.get("id") || "";
   const none = () => Response.json({ now: null }, { headers: { "Cache-Control": "public, s-maxage=20" } });
+  if (id.startsWith("soma-")) {
+    // SomaFM publishes what's playing in its channel list
+    try {
+      const ch = (await somaChannels(30 * 1000)).find((c) => c.id === id);
+      return Response.json({ now: ch && ch.lastPlaying ? parseIcy(ch.lastPlaying) : null }, { headers: { "Cache-Control": "public, s-maxage=20" } });
+    } catch { return none(); }
+  }
   if (!/^[0-9a-f-]{36}$/i.test(id)) return none();
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 5000);

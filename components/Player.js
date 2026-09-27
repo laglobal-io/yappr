@@ -219,7 +219,11 @@ function AboutTab({ p, onOpenShow }) {
       <div className="about-tab">
         <b className="about-title">{p.show.title}</b>
         <p className="about-meta">{[st.country, (st.tags || []).join(", ")].filter(Boolean).join(". ")}</p>
-        {p.show.website ? <a className="pill-link" href={p.show.website} target="_blank" rel="noopener noreferrer">Station website</a> : null}
+        {st.network === "SomaFM" ? <p className="about-desc">SomaFM is listener-supported and commercial-free, so yappr doesn't play ads before it.</p> : null}
+        <div className="about-links">
+          {p.show.website ? <a className="pill-link" href={p.show.website} target="_blank" rel="noopener noreferrer">Station website</a> : null}
+          {st.network === "SomaFM" ? <a className="pill-link" href="https://somafm.com/support/" target="_blank" rel="noopener noreferrer">Support SomaFM</a> : null}
+        </div>
       </div>
     );
   }

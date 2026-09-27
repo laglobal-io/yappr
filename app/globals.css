@@ -784,3 +784,30 @@ body.player-open { overflow: hidden; }
 .net-badge { position: absolute; left: 10px; bottom: 10px; z-index: 2; background: var(--surface); color: var(--ink); border-radius: 999px; padding: 3px 10px; font-size: 0.76rem; font-weight: 800; }
 .nowbar.big { align-items: stretch; }
 .song-now .song-note { display: grid; }
+.about-links { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- Explore and topics ---------- */
+.explore, .topic-view { max-width: 1040px; margin-left: auto; margin-right: auto; }
+.explore > .sec-note { margin-top: -8px; }
+.topic-chips .chip { display: inline-flex; align-items: center; gap: 6px; }
+.topic-chips .chip svg { width: 16px; height: 16px; }
+.chip.rising { background: color-mix(in srgb, var(--pink) 16%, var(--surface)); color: var(--ink); }
+.chip.rising svg { color: var(--pink-2); }
+.story-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.story-card { position: relative; text-align: left; border: 0; background: var(--surface); border-radius: 28px; padding: 22px 20px; min-height: 130px; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+.story-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.story-card b { font-size: 1.35rem; letter-spacing: -0.03em; line-height: 1.1; }
+.story-card span { color: var(--ink-2); font-size: 0.9rem; }
+.rise-pill { position: absolute; top: 14px; left: 16px; display: inline-flex; align-items: center; gap: 5px; background: var(--pink); color: #fff !important; border-radius: 999px; padding: 3px 10px; font-size: 0.78rem !important; font-weight: 800; }
+.rise-pill svg { width: 14px; height: 14px; }
+.play-all { display: inline-flex; align-items: center; gap: 6px; }
+.play-all svg { width: 16px; height: 16px; }
+.topic-title h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); letter-spacing: -0.035em; margin: 0; font-weight: 800; }
+.topic-title p { margin: 2px 0 0; color: var(--ink-2); }
+.topic-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: -4px 0 8px; }
+.topic-actions .pill-btn { padding: 12px 18px; }
+.explore .shelf-row.wide, .topic-view .shelf-row { margin-top: 0; }
+@media (max-width: 420px) { .bottom-nav .nav-btn { padding: 6px 10px; } }
+.topic-chips { justify-content: flex-start; }
+.topic-view .list, .explore .list { justify-content: start; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.topic-view .grid { justify-content: start; }

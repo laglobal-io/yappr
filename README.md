@@ -61,7 +61,7 @@ In Vercel → your project → **Settings → Environment Variables**, add these
 Then **Redeploy**.
 
 ### Already set up Supabase before?
-Run `supabase/schema.sql` again in the SQL Editor. It's safe to re-run, and it adds the `playback` table that lets people pick up where they left off on any device.
+Run `supabase/schema.sql` again in the SQL Editor. It's safe to re-run. It adds the `playback` table (pick up where you left off on any device) and lets people follow topics.
 
 ### How alerts work
 - `vercel.json` schedules `/api/cron/new-episodes` once a day (14:00 UTC), which is the most Vercel's free plan allows. It checks every favorited show for a new episode and notifies fans who turned alerts on.
@@ -140,6 +140,11 @@ npm run dev                  # open http://localhost:3000
 | `app/api/cron/new-episodes`, `public/sw.js` | The scheduled new-episode check and the service worker that shows alerts. |
 | `supabase/schema.sql` | Database tables and security rules for favorites and alerts. |
 | `app/api/radio/local` | "Near you": stations within about 120 km, using Vercel's approximate city-level location for the visitor (never GPS). iHeart, Audacy, Cumulus and Beasley stations rank first, then everyone by listens in the last 24 hours. Only shown when browsing your own country. |
+| `lib/quality.js` | Quality ranking. Podcasts: drops dead feeds, shows without artwork, one-episode feeds and duplicates, then favors shows on Apple Podcasts that are still publishing with a real back catalog. Stations: popularity weighted by logo, bitrate, website and major-network status. |
+| `app/api/search` | Podcast search merges Apple's popularity-ordered search with Podcast Index's full catalog, so the show people mean comes first and everything else is still findable. |
+| `lib/somafm.js`, `app/api/radio/soma` | SomaFM's listener-supported, commercial-free channels (a "Commercial-free" row in LIVE). No yappr ads play before them, and they link to SomaFM's support page. |
+| `lib/topics.js`, `app/api/explore`, `app/api/topic` | Explore and topic pages. Trending topics are names and phrases that several different popular podcasts use in their newest episode titles (counted once per show, with filler like "Episode 12" ignored); "rising" means most mentions came in the last 12 hours. Topic pages gather episodes that mention the topic, shows about it, live stations and related topics. |
+| `app/topic/[q]` | Shareable, search-engine-friendly topic pages, e.g. `/topic/AI`. |
 | `lib/networks.js` | How yappr spots iHeart, Audacy, Cumulus and Beasley stations (name, website or stream address). Best-effort; edit the patterns to add groups. |
 | `lib/icy.js` | Turns a station's raw "now playing" data into song, artist and album art, including iHeart's coded format, and skips ads and jingles. |
 | `app/api/radio/now` | The song or show a station is playing right now, read from the station's stream information. Not every station sends it. |
@@ -157,6 +162,8 @@ Listening progress, "Keep listening", Up next and For You picks are saved in eac
 - **Full player:** tap the play bar to open a big "Now playing" view with artwork, all controls and options, and tabs for Up next, Chapters, Transcript and About (or Song for live radio, with songs played earlier).
 - **Chapters and transcripts:** episodes with a chapters file show a Chapters button that lists them; tap one to start there. MP3 chapters are found as you play. Chapters also appear as marks on the progress bar and under the title. Transcripts follow along as you listen.
 - **Cast:** send audio to Chromecast speakers and TVs (Chrome) or AirPlay (Safari).
+- **More stations:** HLS streams (used by many major stations) play through hls.js, or natively in Safari. Only secure (https) streams are listed, since browsers block the others on a secure site.
+- **Explore and topics:** trending topics from what popular podcasts are discussing, big stories, a news catch-up you can play all at once, and topic pages you can follow. Followers get alerts when a new episode mentions the topic (with alerts set up).
 - **Live radio extras:** "Near you" stations, and the current song or show in the play bar and on the lock screen. For You combines the vibes a listener picks with the categories of shows they've played.
 
 ## Before you go big

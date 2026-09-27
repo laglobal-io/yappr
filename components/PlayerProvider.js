@@ -50,7 +50,7 @@ function makeSilence() {
 
 const slimShow = (s) => ({ id: s.id, title: s.title, author: s.author, image: s.image, categories: (s.categories || []).slice(0, 4) });
 const slimEp = (e) => ({ id: e.id, title: e.title, duration: e.duration, audio: e.audio, image: e.image, published: e.published, live: !!e.live, isVideo: !!e.isVideo, chaptersUrl: e.chaptersUrl || "", transcript: e.transcript || null, type: e.type || "", description: (e.description || "").slice(0, 600) });
-const slimStation = (st) => ({ id: st.id, name: st.name, url: st.url, image: st.image, homepage: st.homepage, country: st.country, tags: st.tags || [] });
+const slimStation = (st) => ({ id: st.id, name: st.name, url: st.url, image: st.image, homepage: st.homepage, country: st.country, tags: st.tags || [], hls: !!st.hls, noAds: !!st.noAds, network: st.network || "" });
 const isAdPhase = (p) => p === "preroll" || p === "postroll";
 
 export function PlayerProvider({ children }) {
@@ -143,6 +143,7 @@ export function PlayerProvider({ children }) {
       return null;
     }
     const live = !!(ep && ep.live);
+    if (ep && ep.noAds) { log(`${slot}: this station is listener-supported, so no yappr ad`); return null; }
     const tag = live ? VAST.live : VAST[slot];
     const context = {
       slot,
@@ -194,6 +195,30 @@ export function PlayerProvider({ children }) {
     }
   }, [update]);
 
+  // One place to change what the media element plays. HLS streams (.m3u8, used by many big stations)
+  // play natively in Safari and through hls.js everywhere else.
+  const hlsRef = useRef(null);
+  const setSource = useCallback(async (url, useHls) => {
+    const a = audioRef.current;
+    if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* ignore */ } hlsRef.current = null; }
+    if (useHls && !a.canPlayType("application/vnd.apple.mpegurl")) {
+      try {
+        const { default: Hls } = await import("hls.js");
+        if (Hls.isSupported()) {
+          const h = new Hls({ enableWorker: true });
+          hlsRef.current = h;
+          h.on(Hls.Events.ERROR, (_e, data) => {
+            if (data && data.fatal) H.current.update({ playing: false, error: "This station's stream stopped. Tap play to reconnect." });
+          });
+          h.loadSource(url);
+          h.attachMedia(a);
+          return;
+        }
+      } catch { /* fall back to the browser */ }
+    }
+    a.src = url;
+  }, []);
+
   const startContent = useCallback(() => {
     const a = audioRef.current;
     const { ep } = st.current;
@@ -207,11 +232,14 @@ export function PlayerProvider({ children }) {
     jumpRef.current = null;
     lastSaveRef.current = resume;
     setVideoOpen(!!ep.isVideo && mediumRef.current === "watch");
-    a.src = ep.audio;
-    a.defaultPlaybackRate = rate;
-    a.playbackRate = rate;
-    playAudio();
-  }, [update, playAudio]);
+    const run = runRef.current;
+    setSource(ep.audio, !!ep.hls).then(() => {
+      if (run !== runRef.current) return;
+      a.defaultPlaybackRate = rate;
+      a.playbackRate = rate;
+      playAudio();
+    });
+  }, [update, playAudio, setSource]);
 
   const startAd = useCallback((ad, slot) => {
     const a = audioRef.current;
@@ -219,11 +247,12 @@ export function PlayerProvider({ children }) {
     firedRef.current = new Set();
     adPausedRef.current = false;
     update({ phase: slot, slot, ad, pos: 0, dur: ad.duration || 0 });
-    a.src = ad.mediaUrl;
-    a.defaultPlaybackRate = 1;
-    a.playbackRate = 1;
-    playAudio();
-  }, [update, playAudio]);
+    setSource(ad.mediaUrl, false).then(() => {
+      a.defaultPlaybackRate = 1;
+      a.playbackRate = 1;
+      playAudio();
+    });
+  }, [update, playAudio, setSource]);
 
   const finish = useCallback(() => {
     update({ phase: "done", playing: false, ad: null });
@@ -247,6 +276,7 @@ export function PlayerProvider({ children }) {
     saveResume(true);
     const run = ++runRef.current;
     try {
+      if (hlsRef.current) { try { hlsRef.current.destroy(); } catch { /* ignore */ } hlsRef.current = null; }
       a.src = silenceRef.current || "";
       const p = a.play();
       if (p && p.catch) p.catch(() => {});
@@ -362,6 +392,22 @@ export function PlayerProvider({ children }) {
     showToast(row ? "Episode saved to favorites" : "Removed from favorites");
   }, [updateStore, showToast, syncFav]);
 
+  // Topics you follow (e.g. "Federal Reserve"), keyed in lowercase
+  const topicKey = (t) => String(t || "").trim().toLowerCase();
+  const isTopicFollowed = useCallback((t) => !!(storeRef.current && storeRef.current.topics && storeRef.current.topics[topicKey(t)]), []);
+  const toggleTopic = useCallback((t) => {
+    let row = null;
+    updateStore((store) => {
+      store.topics = store.topics || {};
+      const k = topicKey(t);
+      if (store.topics[k]) delete store.topics[k];
+      else { row = { topic: String(t).trim(), savedAt: Date.now() }; store.topics[k] = row; }
+    });
+    syncFav("topic", topicKey(t), row);
+    showToast(row ? `Following ${t}` : `Unfollowed ${t}`);
+    return !!row;
+  }, [updateStore, showToast, syncFav]);
+
   const isFavStation = useCallback((id) => !!(storeRef.current && storeRef.current.favStations && storeRef.current.favStations[id]), []);
   const toggleFavStation = useCallback((st) => {
     let row = null;
@@ -379,13 +425,13 @@ export function PlayerProvider({ children }) {
     const epId = `radio-${station.id}`;
     if (st.current.ep && st.current.ep.id === epId) { H.current.toggle(); return; }
     const show = { id: `radio:${station.id}`, title: station.name, author: station.country, image: station.image, categories: station.tags || [], website: station.homepage, station: slimStation(station) };
-    const ep = { id: epId, title: station.name, audio: station.url, duration: 0, image: station.image, published: 0, live: true };
+    const ep = { id: epId, title: station.name, audio: station.url, duration: 0, image: station.image, published: 0, live: true, hls: !!station.hls, noAds: !!station.noAds };
     updateStore((store) => {
       store.recentStations = [slimStation(station), ...(store.recentStations || []).filter((x) => x.id !== station.id)].slice(0, 12);
     });
     H.current.play(show, ep, []);
     // Radio Browser asks apps to report plays so popular stations rank well for everyone.
-    fetch(`https://de1.api.radio-browser.info/json/url/${encodeURIComponent(station.id)}`, { mode: "no-cors" }).catch(() => {});
+    if (/^[0-9a-f-]{36}$/i.test(station.id)) fetch(`https://de1.api.radio-browser.info/json/url/${encodeURIComponent(station.id)}`, { mode: "no-cors" }).catch(() => {});
   }, [updateStore]);
 
   // On sign-in: merge the account's favorites with this device's, then upload anything only saved locally
@@ -398,7 +444,7 @@ export function PlayerProvider({ children }) {
       const { data, error } = await db.from("favorites").select("kind,item_id,data");
       if (cancelled || error) return;
       const store = storeRef.current;
-      const maps = { show: "favShows", episode: "favEps", station: "favStations" };
+      const maps = { show: "favShows", episode: "favEps", station: "favStations", topic: "topics" };
       const remote = new Set();
       (data || []).forEach((r) => {
         const key = maps[r.kind];
@@ -501,6 +547,16 @@ export function PlayerProvider({ children }) {
     saveQueue(list.filter((x) => x.ep.id !== id));
     play(item.show, item.ep, []);
   }, [saveQueue, play]);
+  const playAll = useCallback((items) => {
+    const list = (items || []).filter((x) => x && x.ep && !x.ep.live);
+    if (!list.length) return;
+    const rest = list.slice(1).map((x) => ({ show: slimShow(x.show), ep: slimEp(x.ep) }));
+    const existing = ((storeRef.current && storeRef.current.upNext) || []).filter((x) => !rest.some((r) => r.ep.id === x.ep.id));
+    saveQueue([...rest, ...existing].slice(0, 50));
+    play(list[0].show, list[0].ep, []);
+    if (rest.length) showToast(`Playing ${list.length} episodes`);
+  }, [saveQueue, play, showToast]);
+
   const setAutoplay = useCallback((on) => {
     setAutoplayState(on);
     if (storeRef.current) { storeRef.current.autoplay = on; persist(false); }
@@ -756,7 +812,7 @@ export function PlayerProvider({ children }) {
     isFavShow, isFavEp, toggleFavShow, toggleFavEp, share, nextInQueue, playNext,
     isFavStation, toggleFavStation, playStation, medium, setMedium, videoOpen, setVideoOpen, notify: showToast,
     sleep, setSleep, upNext, addToQueue, removeFromQueue, playQueued, autoplay, setAutoplay,
-    castSupported, cast, nowPlaying, songHistory, extras, playAt,
+    castSupported, cast, nowPlaying, songHistory, extras, playAt, playAll, isTopicFollowed, toggleTopic,
   };
 
   return (

@@ -67,7 +67,7 @@ export function NowBar({ onOpenShow }) {
       </div>
 
       <div className="nb-controls">
-        {!live ? <button className="icon-btn nb-skip" onClick={() => p.seekBy(-15)} disabled={!content} aria-label="Back 15 seconds"><Icon name="back" /></button> : null}
+        {!live ? <button className="icon-btn nb-skip" onClick={() => p.seekBy(-15)} disabled={!content} aria-label="Back 15 seconds"><Icon name="rewind" /></button> : null}
         <button className="nb-play" onClick={p.toggle} aria-label={label}>
           {loading ? <Dots /> : <Icon name={p.playing ? "pause" : "play"} />}
         </button>

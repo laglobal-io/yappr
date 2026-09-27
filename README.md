@@ -114,7 +114,9 @@ npm run dev                  # open http://localhost:3000
 | `app/api/trending`, `app/api/search`, `app/api/podcast/[id]` | Server routes that call Podcast Index. Your secret never reaches the browser, and results are cached at the edge for 10–15 minutes to keep you well within API limits. |
 | `components/PlayerProvider.js` | The audio engine: one audio element, the ad → episode → ad sequence, resume positions, lock-screen controls. |
 | `lib/vast.js` | VAST ad fetching, parsing and tracking pixels. |
-| `components/App.js` | Home page: search, Trending, Charts, For You and Favorites tabs. Shows expand inline below their row. |
+| `components/App.js` | The app shell: Home (Podcasts, Video and Live, each as rows of shows with "See all"), Search, Library, and the bottom navigation on phones. Shows expand inline below their row. |
+| `components/Account.js` | The header sign-in button and the account card at the top of the Library (sign in, profile, alerts, sign out). |
+| `app/api/latest` | New episodes from the shows someone follows, in one request (powers "New from shows you follow"). |
 | `components/ShowPanel.js` | The expanded show view: host, categories, episode count, website, support link, and the episode list with play, favorite and share. |
 | `components/Player.js` | The now-playing bar at the bottom of the screen, plus the ad debug panel. |
 | `app/show/[id]` | Shareable links for shows and episodes (`/show/123` or `/show/123?ep=456`), with previews for iMessage, WhatsApp, X and Slack. |

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useAuth } from "./AuthProvider";
 import { usePlayer } from "./PlayerProvider";
 import Icon from "./Icon";
+import LogoMark from "./Logo";
 
 function GoogleMark() {
   return (
@@ -17,30 +18,44 @@ function GoogleMark() {
 }
 
 const ALERT_TEXT = {
-  on: "On. We'll ping you when a favorite show posts a new episode.",
-  off: "Off. Turn on to hear when favorite shows post new episodes.",
+  on: "On. We'll ping you when a show you follow posts a new episode.",
+  off: "Get a ping when a show you follow posts a new episode.",
   blocked: "Blocked in your browser settings. Allow notifications for this site to turn them on.",
   unsupported: "Not available in this browser. On iPhone, add yappr to your Home Screen first.",
   working: "One sec…",
 };
 
-export default function Account() {
+export function Avatar({ user, size = 44 }) {
+  const name = (user.user_metadata && user.user_metadata.full_name) || user.email || "?";
+  const pic = user.user_metadata && user.user_metadata.avatar_url;
+  return (
+    <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.42 }} aria-hidden="true">
+      {pic ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={pic} alt="" referrerPolicy="no-referrer" />
+      ) : name.trim()[0].toUpperCase()}
+    </span>
+  );
+}
+
+// Header button: your avatar when signed in, "Sign in" otherwise. Both open the Library.
+export function HeaderAccount({ onOpen }) {
   const auth = useAuth();
-  const player = usePlayer();
+  if (!auth.enabled) return null;
+  if (auth.user) {
+    return (
+      <button className="avatar-btn" onClick={onOpen} aria-label="Your library and account">
+        <Avatar user={auth.user} />
+      </button>
+    );
+  }
+  return <button className="signin-btn" onClick={onOpen}>Sign in</button>;
+}
+
+export function SignInForm() {
+  const auth = useAuth();
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState({ state: "idle" });
-  const boxRef = useRef(null);
-
-  useEffect(() => {
-    if (!auth.menuOpen) return;
-    const onDown = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) auth.setMenuOpen(false); };
-    const onKey = (e) => { if (e.key === "Escape") auth.setMenuOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
-  }, [auth.menuOpen, auth]);
-
-  if (!auth.enabled) return null;
 
   const sendLink = async (e) => {
     e.preventDefault();
@@ -53,83 +68,95 @@ export default function Account() {
       setStatus({ state: "error", msg: err.message });
     }
   };
-
   const google = async () => {
     try { await auth.signInWithGoogle(); } catch (err) { setStatus({ state: "error", msg: err.message }); }
   };
 
+  if (status.state === "sent") {
+    return (
+      <div className="acct-sent" role="status">
+        <b>Check your inbox</b>
+        <p>We sent a sign-in link to {email.trim()}. Open it on this device to finish signing in.</p>
+        <button className="text-btn" onClick={() => setStatus({ state: "idle" })}>Use a different email</button>
+      </div>
+    );
+  }
+  return (
+    <div className="signin-form">
+      <button className="google-btn" onClick={google}><GoogleMark /> Continue with Google</button>
+      <div className="acct-or"><span>or</span></div>
+      <form onSubmit={sendLink} noValidate>
+        <label className="sr-only" htmlFor="acct-email">Email address</label>
+        <input
+          id="acct-email" type="email" inputMode="email" autoComplete="email" placeholder="you@example.com"
+          value={email}
+          onChange={(e) => { setEmail(e.target.value); if (status.state === "error") setStatus({ state: "idle" }); }}
+          aria-invalid={status.state === "error"} aria-describedby={status.state === "error" ? "acct-err" : undefined}
+        />
+        {status.state === "error" ? <p id="acct-err" className="acct-err">{status.msg}</p> : null}
+        <button className="cta wide" type="submit" disabled={status.state === "sending"}>
+          <Icon name="mail" />
+          {status.state === "sending" ? "Sending…" : "Email me a sign-in link"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// The top of the Library: sign in, or your profile, alerts and sign out.
+export function AccountCard() {
+  const auth = useAuth();
+  const player = usePlayer();
+  if (!auth.enabled) return null;
+
+  if (!auth.user) {
+    return (
+      <section className="account-card signed-out" aria-labelledby="acct-h">
+        <div className="acct-intro">
+          <span className="acct-mark"><LogoMark /></span>
+          <div>
+            <h2 id="acct-h">Sign in to yappr</h2>
+            <ul className="perks">
+              <li><Icon name="heart" />Your favorites on every device</li>
+              <li><Icon name="bell" />Alerts when shows you follow post</li>
+              <li><Icon name="library" />Your history, saved and synced</li>
+            </ul>
+          </div>
+        </div>
+        <SignInForm />
+      </section>
+    );
+  }
+
+  const u = auth.user;
   const toggleAlerts = async () => {
     try {
       if (auth.alerts === "on") await auth.turnOffAlerts();
-      else await auth.turnOnAlerts();
+      else { await auth.turnOnAlerts(); player.notify("Alerts on. We'll ping you about new episodes."); }
     } catch (err) {
       player.notify(err.message);
     }
   };
-
-  const u = auth.user;
-  const initial = u && (u.user_metadata?.full_name || u.email || "?").trim()[0].toUpperCase();
-  const avatar = u && u.user_metadata?.avatar_url;
-
   return (
-    <div className="account" ref={boxRef}>
-      {u ? (
-        <button className="avatar-btn" onClick={() => auth.setMenuOpen(!auth.menuOpen)} aria-expanded={auth.menuOpen} aria-label="Your account">
-          {avatar ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatar} alt="" referrerPolicy="no-referrer" />
-          ) : initial}
-        </button>
-      ) : (
-        <button className="signin-btn" onClick={() => auth.setMenuOpen(!auth.menuOpen)} aria-expanded={auth.menuOpen}>Sign in</button>
-      )}
-
-      {auth.menuOpen ? (
-        <div className="account-menu" role="dialog" aria-label={u ? "Your account" : "Sign in"}>
-          {u ? (
-            <>
-              <p className="acct-who"><b>{u.user_metadata?.full_name || "Signed in"}</b><span>{u.email}</span></p>
-              <div className="acct-row">
-                <div>
-                  <b>New-episode alerts</b>
-                  <span>{ALERT_TEXT[auth.alerts] || ALERT_TEXT.off}</span>
-                </div>
-                {auth.alerts !== "unsupported" && auth.alerts !== "blocked" ? (
-                  <button className={`toggle${auth.alerts === "on" ? " on" : ""}`} role="switch" aria-checked={auth.alerts === "on"} aria-label="New-episode alerts" onClick={toggleAlerts} disabled={auth.alerts === "working"} />
-                ) : null}
-              </div>
-              <p className="acct-note">Your favorites sync across every device you sign in on.</p>
-              <button className="pill-btn ghost wide" onClick={auth.signOut}>Sign out</button>
-            </>
-          ) : status.state === "sent" ? (
-            <div className="acct-sent">
-              <b>Check your inbox</b>
-              <p>We sent a sign-in link to {email.trim()}. Open it on this device to finish signing in.</p>
-              <button className="text-btn" onClick={() => setStatus({ state: "idle" })}>Use a different email</button>
-            </div>
-          ) : (
-            <>
-              <b className="acct-title">Sign in to yappr</b>
-              <p className="acct-note">Keep your favorites on every device and get alerts when your shows post new episodes.</p>
-              <button className="google-btn" onClick={google}><GoogleMark /> Continue with Google</button>
-              <div className="acct-or"><span>or</span></div>
-              <form onSubmit={sendLink} noValidate>
-                <label className="sr-only" htmlFor="acct-email">Email address</label>
-                <input
-                  id="acct-email" type="email" inputMode="email" autoComplete="email" placeholder="you@example.com"
-                  value={email} onChange={(e) => { setEmail(e.target.value); if (status.state === "error") setStatus({ state: "idle" }); }}
-                  aria-invalid={status.state === "error"} aria-describedby={status.state === "error" ? "acct-err" : undefined}
-                />
-                {status.state === "error" ? <p id="acct-err" className="acct-err">{status.msg}</p> : null}
-                <button className="cta wide" type="submit" disabled={status.state === "sending"}>
-                  <Icon name="mail" />
-                  {status.state === "sending" ? "Sending…" : "Email me a sign-in link"}
-                </button>
-              </form>
-            </>
-          )}
+    <section className="account-card" aria-label="Your account">
+      <div className="acct-profile">
+        <Avatar user={u} size={64} />
+        <div className="acct-who">
+          <b>{(u.user_metadata && u.user_metadata.full_name) || "Welcome back"}</b>
+          <span>{u.email}</span>
         </div>
-      ) : null}
-    </div>
+        <button className="pill-btn ghost" onClick={auth.signOut}>Sign out</button>
+      </div>
+      <div className="acct-row">
+        <Icon name="bell" />
+        <div>
+          <b>New-episode alerts</b>
+          <span>{ALERT_TEXT[auth.alerts] || ALERT_TEXT.off}</span>
+        </div>
+        {auth.alerts !== "unsupported" && auth.alerts !== "blocked" ? (
+          <button className={`toggle${auth.alerts === "on" ? " on" : ""}`} role="switch" aria-checked={auth.alerts === "on"} aria-label="New-episode alerts" onClick={toggleAlerts} disabled={auth.alerts === "working"} />
+        ) : null}
+      </div>
+    </section>
   );
 }

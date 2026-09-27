@@ -70,6 +70,50 @@ Run `supabase/schema.sql` again in the SQL Editor. It's safe to re-run. It adds 
 - **iPhone:** web alerts only work after adding yappr to the Home Screen (Share → Add to Home Screen, iOS 16.4 or later). yappr explains this when someone tries to turn alerts on in Safari.
 - Supabase pauses free projects after about a week with no activity. Real traffic prevents this; otherwise upgrade or visit the dashboard occasionally.
 
+## Social: Feed, comments, profiles and verified hosts
+
+Needs the Supabase setup above. Run `supabase/schema.sql` again (safe to re-run) to add the social tables.
+
+- **Feed tab:** For you (ranked by votes, likes, reposts and replies, favoring recent posts), Following (people you follow plus verified hosts of shows you've favorited), and Latest.
+- **Posts** can attach an episode (optionally at a timestamp) or a station. Post from any episode (the pen button) or from the play bar.
+- **Comments** on every episode, in show pages and in the full player's Comments tab. Verified hosts get a "Host" label on their own show.
+- **Upvote/downvote, like, repost, quote, reply, share, follow.** Counts are kept by the database, so they can't be faked.
+- **Profiles** at `/u/handle`; posts at `/post/123`, both with link previews.
+- **Verified hosts:** on any show page, "Are you the host? Claim this show" gives the host a code to add to their feed. `/api/verify-show` reads the feed and grants the badge automatically.
+- **Verified networks and the yappr team:** set by you. In Supabase → Table Editor → `profiles`, set `verified` to `network` or `staff` for that account.
+
+### Moderation (do this before inviting lots of people)
+- Reports land in the `reports` table (Supabase → Table Editor). To take a post down, set `hidden` to `true` on it in `posts`; it disappears everywhere.
+- To remove an account, delete it under Authentication → Users (their posts are deleted with it).
+- As you grow, consider an automated moderation service for text and a dedicated admin screen. yappr is responsible for acting on reports, especially anything involving minors or threats.
+
+## yapi: AI search
+
+yapi is yappr's AI listening assistant, in Search → Ask yapi (and linked from Explore). People describe what they want ("something funny for a 30-minute drive", "catch me up on today's news", "what are people saying about Serial?") and yapi answers in a sentence or two with playable cards.
+
+**How it works:** yapi runs on Anthropic's Claude through their API, with yappr's own name, personality and rules (`lib/yapi.js`). It can't recommend anything it didn't find with yappr's own tools: show search, episode search, a show's latest episodes, charts, trending topics, stations and community posts. Anything it names that the tools didn't return is dropped before it reaches the screen.
+
+**Turn it on (about 5 minutes):**
+1. Create an account at console.anthropic.com, add a payment method, and create an API key.
+2. In Vercel → Settings → Environment Variables, add `ANTHROPIC_API_KEY` (mark it **Secret**), then redeploy.
+3. Optional: `YAPI_MODEL` (`claude-sonnet-5` by default, or `claude-haiku-4-5-20251001` for about half the cost) and `YAPI_HOURLY_LIMIT` (questions per visitor per hour, default 20).
+
+Until the key is set, the Ask yapi switch simply doesn't appear.
+
+**Cost:** roughly 1 to 3 cents per question on Sonnet 5 (a question usually takes two or three model calls while yapi looks things up); less on Haiku. Set a monthly spending limit in the Anthropic console so there are no surprises. The per-visitor hourly limit lives in server memory, which is fine to start; at scale, move it to a shared store like Upstash Redis.
+
+**Vercel plan note:** yapi answers can take 10 to 25 seconds. The route allows up to 60 seconds, which works on the free plan.
+
+## Performance, search engines and analytics
+
+- **Artwork is resized** to the size it's shown at (WebP, about 98% smaller than the 3000px originals many podcasts use) through wsrv.nl, a free, open-source image CDN. Apple artwork uses Apple's own resizing. If resizing fails, the original image loads instead. Set `NEXT_PUBLIC_IMAGE_PROXY=off` to turn it off, or self-host weserv later for full control.
+- **Home and show pages arrive with content** already in them: the server fetches the first shelves (Top, Trending, Climbing fast) and a show's episodes while building the page. Slow lookups are skipped after 2.5 seconds and load in the browser instead.
+- **Feed, profiles, posts, Explore and yapi load on demand**, when someone opens them.
+- **Search engines:** `/sitemap.xml` (main pages, evergreen topics, trending shows; refreshed every 6 hours), `/robots.txt`, canonical addresses on every page, and podcast structured data on show and episode pages. Set `NEXT_PUBLIC_SITE_URL` to your real address. Then add the site in Google Search Console and submit the sitemap.
+- **Analytics:** Vercel Web Analytics and Speed Insights are built in (cookie-free). Turn them on in Vercel → your project → Analytics and Speed Insights. Speed Insights shows how fast yappr is for real visitors.
+- **Accessibility:** text and button colors meet WCAG AA contrast, and pop-ups and the full player keep keyboard focus inside them.
+- **Still worth adding later:** error monitoring (Sentry has a free tier and a Next.js setup wizard), and a proper accessibility audit with real assistive-technology users.
+
 ## Ads
 
 The player runs **pre-roll → episode → post-roll** (live radio gets a pre-roll only). Ads can't be skipped or scrubbed, and nothing plays mid-episode.

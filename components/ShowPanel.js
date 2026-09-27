@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { SeedCtx } from "./App";
 import { usePlayer } from "./PlayerProvider";
 import { useAuth } from "./AuthProvider";
+import { useSocial, CommentsThread, ClaimShow } from "./Social";
 import Art from "./Art";
 import Icon from "./Icon";
 import { ago, clock, length } from "@/lib/format";
@@ -23,14 +25,19 @@ function languageName(code) {
 export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) {
   const player = usePlayer();
   const auth = useAuth();
-  const [data, setData] = useState({ state: "loading" });
+  const seed = useContext(SeedCtx);
+  const seedUrl = showKey && showKey.startsWith("pi:") ? `/api/podcast/${showKey.slice(3)}` : null;
+  const [data, setData] = useState(() => (seedUrl && seed[seedUrl] ? { state: "ok", ...seed[seedUrl] } : { state: "loading" }));
   const [count, setCount] = useState(PAGE);
   const [more, setMore] = useState(false);
   const [nudge, setNudge] = useState(false);
   const rootRef = useRef(null);
   const closeRef = useRef(null);
 
+  const usedSeed = useRef(false);
   useEffect(() => {
+    if (!usedSeed.current && seedUrl && seed[seedUrl]) { usedSeed.current = true; return; } // server already sent it
+    usedSeed.current = true;
     const ac = new AbortController();
     const [kind, key] = showKey.split(":");
     setData({ state: "loading" });
@@ -95,7 +102,7 @@ export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) 
     body = (
       <>
         <div className="panel-head">
-          <Art id={feed.id} src={feed.image} title={feed.title} className="panel-art" />
+          <Art id={feed.id} src={feed.image} title={feed.title} size={220} className="panel-art" />
           <div className="panel-info">
             <div className="badges">
               {feed.categories.slice(0, 3).map((c) => <span key={c} className="badge">{c}</span>)}
@@ -130,6 +137,7 @@ export default function ShowPanel({ showKey, focusEp, onClose, onPlay, caret }) 
               ) : null}
             </div>
             {fav && auth.enabled ? <AlertNudge auth={auth} player={player} show={nudge} /> : null}
+            <ClaimShow show={feed} />
           </div>
         </div>
 
@@ -213,6 +221,8 @@ function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
   const guests = ep.people.filter((p) => p.role !== "host").map((p) => p.name);
   const code = [ep.season ? `S${ep.season}` : "", ep.number ? `E${ep.number}` : ""].filter(Boolean).join(" ");
   const [chap, setChap] = useState({ open: false, state: "idle", list: null });
+  const [talk, setTalk] = useState(false);
+  const social = useSocial();
   const toggleChapters = () => {
     if (chap.open) { setChap((c) => ({ ...c, open: false })); return; }
     if (chap.list) { setChap((c) => ({ ...c, open: true })); return; }
@@ -250,6 +260,9 @@ function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
             </button>
           ) : null}
           {ep.transcript ? <span>Transcript</span> : null}
+          {social.enabled ? (
+            <button className="fact-btn" onClick={() => setTalk(!talk)} aria-expanded={talk}><Icon name="comment" />Comments</button>
+          ) : null}
           {done ? <span className="done">Played</span> : resume && ep.duration && !now ? <span>{clock(ep.duration - resume)} left</span> : null}
           {guests.length ? <span>With {guests.slice(0, 2).join(" and ")}</span> : null}
         </div>
@@ -283,10 +296,16 @@ function EpisodeRow({ feed, ep, eps, onPlay, focused, store }) {
         <button className={`round-btn sm${fav ? " on" : ""}`} aria-pressed={fav} onClick={() => player.toggleFavEp(feed, ep)} aria-label={fav ? "Remove episode from favorites" : "Save episode to favorites"}>
           <Icon name={fav ? "heartFill" : "heart"} />
         </button>
+        {social.enabled ? (
+          <button className="round-btn sm" onClick={() => social.compose({ attach: { show: { id: feed.id, title: feed.title, image: feed.image, author: feed.author }, ep: { id: ep.id, title: ep.title, audio: ep.audio, image: ep.image, duration: ep.duration } } })} aria-label={`Post about ${ep.title}`}>
+            <Icon name="pen" />
+          </button>
+        ) : null}
         <button className="round-btn sm" onClick={() => player.share({ title: ep.title, text: `${ep.title} from ${feed.title}, on yappr`, url: showUrl(feed.id, ep.id) })} aria-label="Share episode">
           <Icon name="share" />
         </button>
       </div>
+      {talk ? <div className="ep-comments"><CommentsThread show={feed} ep={ep} compact /></div> : null}
     </li>
   );
 }

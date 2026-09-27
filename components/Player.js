@@ -6,6 +6,8 @@ import Icon, { Dots } from "./Icon";
 import Art from "./Art";
 import { ago, clock, length } from "@/lib/format";
 import { showUrl } from "@/lib/api";
+import { useSocial, CommentsThread } from "./Social";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 
 const isAdPhase = (p) => p === "preroll" || p === "postroll";
 const SLEEP_OPTIONS = [15, 30, 45, 60];
@@ -58,7 +60,7 @@ function ArtFor({ p, lab, className }) {
     );
   }
   if (ad) return <span className={`art ad-art ${className}`} aria-hidden="true">ad</span>;
-  return <Art id={p.show.id} src={lab.art || p.ep.image || p.show.image} title={p.show.title} className={className} fit={p.ep.live && !lab.art ? "contain" : "cover"} />;
+  return <Art id={p.show.id} src={lab.art || p.ep.image || p.show.image} title={p.show.title} className={className} fit={p.ep.live && !lab.art ? "contain" : "cover"} size={className === "big-art" ? 300 : 56} />;
 }
 
 function Track({ p, drag, setDrag }) {
@@ -128,6 +130,7 @@ function SleepMenu({ p, onClose }) {
 
 // The row of options: sleep, Up next, cast, speed, watch, favorite, share, ad link
 function Actions({ p, pop, setPop, showQueue }) {
+  const social = useSocial();
   const ad = isAdPhase(p.phase);
   const live = !!p.ep.live;
   const content = p.phase === "content" && !live;
@@ -159,6 +162,14 @@ function Actions({ p, pop, setPop, showQueue }) {
       ) : null}
       {p.castSupported ? <button className="round-btn" onClick={p.cast} aria-label="Play on a speaker or TV"><Icon name="cast" /></button> : null}
       {!live ? <button className="pill-btn ghost nb-speed" onClick={p.cycleRate} disabled={!content} aria-label={`Playback speed ${p.rate}x`}>{p.rate}×</button> : null}
+      {social.enabled && !ad ? (
+        <button className="round-btn" onClick={() => social.compose(live && p.show.station
+          ? { attach: { station: p.show.station } }
+          : { attach: { show: { id: p.show.id, title: p.show.title, image: p.show.image, author: p.show.author }, ep: { id: p.ep.id, title: p.ep.title, audio: p.ep.audio, image: p.ep.image, duration: p.ep.duration } }, atSeconds: p.phase === "content" ? p.pos : null })}
+          aria-label={live ? "Post about this station" : "Post about this episode"}>
+          <Icon name="pen" />
+        </button>
+      ) : null}
       <button className={`round-btn${fav ? " on" : ""}`} aria-pressed={fav} onClick={toggleFav} aria-label={fav ? "Remove from favorites" : "Save to favorites"}>
         <Icon name={fav ? "heartFill" : "heart"} />
       </button>
@@ -248,6 +259,7 @@ function DetailTabs({ p, tab, setTab, big, onOpenShow }) {
   if (!live) tabs.push({ id: "queue", label: "Up next" });
   if (chapters.length) tabs.push({ id: "chapters", label: `Chapters (${chapters.length})` });
   if (transcript.length) tabs.push({ id: "transcript", label: "Transcript" });
+  if (big && !live && p.social && p.social.enabled) tabs.push({ id: "comments", label: "Comments" });
   if (big) tabs.push({ id: "about", label: "About" });
   const active = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
   const content = p.phase === "content";
@@ -270,7 +282,9 @@ function DetailTabs({ p, tab, setTab, big, onOpenShow }) {
         {tabs.map((t) => <button key={t.id} role="tab" aria-selected={active === t.id} onClick={() => setTab(t.id)}>{t.label}</button>)}
       </div>
       <div className="bar-panel-body" ref={listRef}>
-        {active === "song" ? <SongTab p={p} /> : active === "about" ? <AboutTab p={p} onOpenShow={onOpenShow} /> : active === "queue" ? (
+        {active === "song" ? <SongTab p={p} /> : active === "about" ? <AboutTab p={p} onOpenShow={onOpenShow} /> : active === "comments" ? (
+          <CommentsThread show={{ id: p.show.id, title: p.show.title, image: p.show.image, author: p.show.author }} ep={p.ep} compact />
+        ) : active === "queue" ? (
           <>
             {p.upNext.length ? (
               <ul className="q-list">
@@ -324,13 +338,17 @@ function DetailTabs({ p, tab, setTab, big, onOpenShow }) {
 /* ---------- the play bar, which expands into a full "Now playing" view ---------- */
 
 export function NowBar({ onOpenShow }) {
-  const p = usePlayer();
+  const player = usePlayer();
+  const social = useSocial();
+  const p = { ...player, social };
   const [big, setBig] = useState(false);
   const [drag, setDrag] = useState(null);
   const [pop, setPop] = useState(null); // "sleep" | "panel"
   const [tab, setTab] = useState("queue");
   const barRef = useRef(null);
   const closeRef = useRef(null);
+  const sheetRef = useRef(null);
+  useFocusTrap(sheetRef, big);
 
   useEffect(() => {
     if (!pop) return;
@@ -363,7 +381,7 @@ export function NowBar({ onOpenShow }) {
     return (
       <>
         <div className="player-scrim" onClick={() => setBig(false)} />
-        <section className={`nowbar show big ${stateCls}`} role="dialog" aria-modal="true" aria-label="Now playing" ref={barRef}>
+        <section className={`nowbar show big ${stateCls}`} role="dialog" aria-modal="true" aria-label="Now playing" ref={(el) => { barRef.current = el; sheetRef.current = el; }}>
           <div className="big-head">
             <button ref={closeRef} className="icon-btn" onClick={() => setBig(false)} aria-label="Shrink player"><Icon name="down" /></button>
             <span className="big-kicker">{ad ? "Quick ad" : live ? "Live radio" : p.phase === "done" ? "All done" : "Now playing"}</span>

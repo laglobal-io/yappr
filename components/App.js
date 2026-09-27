@@ -1,11 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PlayerProvider, usePlayer } from "./PlayerProvider";
 import { AuthProvider, useAuth } from "./AuthProvider";
 import { NowBar, DebugPanel } from "./Player";
 import ShowPanel from "./ShowPanel";
 import { AccountCard, HeaderAccount } from "./Account";
+import dynamic from "next/dynamic";
+import { SocialProvider, useSocial, ProfileAvatar, Verified } from "./Social";
+
+// Pages most people don't open on their first visit load on demand
+const loadingView = () => <div className="view-loading" aria-busy="true"><span className="skel" /></div>;
+const FeedView = dynamic(() => import("./SocialPages").then((m) => m.FeedView), { loading: loadingView });
+const PostView = dynamic(() => import("./SocialPages").then((m) => m.PostView), { loading: loadingView });
+const ProfileView = dynamic(() => import("./SocialPages").then((m) => m.ProfileView), { loading: loadingView });
+const ExploreView = dynamic(() => import("./Explore").then((m) => m.ExploreView), { loading: loadingView });
+const TopicView = dynamic(() => import("./Explore").then((m) => m.TopicView), { loading: loadingView });
+const YapiView = dynamic(() => import("./Yapi"), { loading: loadingView });
 import Art from "./Art";
 import Icon from "./Icon";
 import Footer from "./Footer";
@@ -41,33 +52,42 @@ const MODES = [
   { id: "video", label: "Video", icon: "video" },
   { id: "live", label: "Live" },
 ];
-const VIEWS = ["home", "explore", "search", "library"];
-// Evergreen topics for browsing when nothing's trending in a category you care about
-const BROWSE_TOPICS = ["AI", "Politics", "Economy", "Climate", "Space", "Crypto", "Startups", "NFL", "NBA", "Soccer", "Movies", "Music", "Mental Health", "Parenting", "Fitness", "True Crime", "History", "Science"];
+const VIEWS = ["home", "explore", "feed", "search", "library"];
 const SHELF_MAX = 12;
 
 /* ---------- app ---------- */
 
-export default function App({ initialShow = null, initialEp = null, initialTopic = null }) {
+// Data the server already fetched for the first screen, keyed by the API address the page would call
+export const SeedCtx = createContext({});
+
+export default function App({ initialShow = null, initialEp = null, initialTopic = null, initialPost = null, initialProfile = null, initialData = {}, initialCountry = null, returning = false }) {
   return (
+    <SeedCtx.Provider value={initialData}>
     <AuthProvider>
       <PlayerProvider>
-        <Shell initialShow={initialShow} initialEp={initialEp} initialTopic={initialTopic} />
+        <SocialProvider>
+          <Shell initialShow={initialShow} initialEp={initialEp} initialTopic={initialTopic} initialPost={initialPost} initialProfile={initialProfile} initialCountry={initialCountry} returning={returning} />
+        </SocialProvider>
       </PlayerProvider>
     </AuthProvider>
+    </SeedCtx.Provider>
   );
 }
 
-function Shell({ initialShow, initialEp, initialTopic }) {
+function Shell({ initialShow, initialEp, initialTopic, initialPost, initialProfile, initialCountry, returning }) {
   const player = usePlayer();
   const auth = useAuth();
-  const [view, setView] = useState(initialTopic ? "topic" : "home"); // home | explore | topic | search | library | list
+  const social = useSocial();
+  const [view, setView] = useState(initialTopic ? "topic" : initialPost ? "post" : initialProfile ? "profile" : "home"); // home | explore | topic | feed | post | profile | search | library | list
   const [topic, setTopic] = useState(initialTopic);
+  const [postId, setPostId] = useState(initialPost);
+  const [profileHandle, setProfileHandle] = useState(initialProfile);
+  const [searchMode, setSearchMode] = useState("search"); // search | yapi
   const [list, setList] = useState(null); // the "See all" page
   const [mode, setModeState] = useState("podcasts");
   const [genre, setGenre] = useState("All");
   const [open, setOpen] = useState(initialShow ? { key: `pi:${initialShow}`, origin: "top", focusEp: initialEp } : null);
-  const [country, setCountryState] = useState(null);
+  const [country, setCountryState] = useState(initialCountry);
   const [debug, setDebug] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const topRef = useRef(null);
@@ -78,6 +98,7 @@ function Shell({ initialShow, initialEp, initialTopic }) {
     setDebug(new URLSearchParams(window.location.search).has("debug"));
     const h = window.location.hash.replace("#", "");
     if (VIEWS.includes(h)) setView(h);
+    if (h === "yapi") { setView("search"); setSearchMode("yapi"); }
     if (MODES.some((m) => m.id === h)) setModeState(h);
   }, []);
   const storeReady = !!store;
@@ -85,6 +106,7 @@ function Shell({ initialShow, initialEp, initialTopic }) {
     if (!storeReady) return;
     if (!window.location.hash && store.mode && MODES.some((m) => m.id === store.mode)) setModeState(store.mode);
     if (store.country && isCountry(store.country)) setCountryState(store.country);
+    else if (initialCountry) player.updateStore((s) => { if (!s.country) s.country = initialCountry; });
     else getJSON("/api/geo").then((d) => {
       setCountryState(d.country);
       player.updateStore((s) => { if (!s.country) s.country = d.country; }); // also used for ad targeting
@@ -94,7 +116,7 @@ function Shell({ initialShow, initialEp, initialTopic }) {
 
   const setHash = (h) => {
     // Leaving a topic page (/topic/...) goes back to the main address
-    const path = window.location.pathname.startsWith("/topic/") ? "/" : window.location.pathname;
+    const path = /^\/(topic|post|u)\//.test(window.location.pathname) ? "/" : window.location.pathname;
     try { window.history.replaceState(null, "", path + window.location.search + (h ? `#${h}` : "")); } catch { /* ignore */ }
   };
   const nav = useCallback((v) => {
@@ -142,11 +164,33 @@ function Shell({ initialShow, initialEp, initialTopic }) {
     try { window.history.pushState({ topic: q }, "", `/topic/${encodeURIComponent(q)}`); } catch { /* ignore */ }
     window.scrollTo({ top: 0 });
   }, []);
+  // Posts and profiles have their own addresses too (/post/123, /u/handle)
+  const openPost = useCallback((p) => {
+    const id = p && p.id ? p.id : p;
+    setPostId(id);
+    setView("post");
+    try { window.history.pushState({ post: id }, "", `/post/${id}`); } catch { /* ignore */ }
+    window.scrollTo({ top: 0 });
+  }, []);
+  const openProfile = useCallback((handle) => {
+    if (!handle) return;
+    setProfileHandle(handle);
+    setView("profile");
+    try { window.history.pushState({ profile: handle }, "", `/u/${handle}`); } catch { /* ignore */ }
+    window.scrollTo({ top: 0 });
+  }, []);
+  useEffect(() => { social.setNav({ openPost, openProfile }); }, [social, openPost, openProfile]);
+
   useEffect(() => {
     const onPop = () => {
-      const m = window.location.pathname.match(/^\/topic\/(.+)$/);
+      const path = window.location.pathname;
+      const m = path.match(/^\/topic\/(.+)$/);
+      const mp = path.match(/^\/post\/(\d+)$/);
+      const mu = path.match(/^\/u\/([a-z0-9_]+)$/i);
       if (m) { setTopic(decodeURIComponent(m[1])); setView("topic"); }
-      else setView((v) => (v === "topic" ? "explore" : v));
+      else if (mp) { setPostId(mp[1]); setView("post"); }
+      else if (mu) { setProfileHandle(mu[1]); setView("profile"); }
+      else setView((v) => (v === "topic" ? "explore" : v === "post" || v === "profile" ? "feed" : v));
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -193,14 +237,18 @@ function Shell({ initialShow, initialEp, initialTopic }) {
     nav("home");
   };
 
-  const firstVisit = !!store && !auth.user && !store.recent.length && !Object.keys(store.favShows || {}).length && !(store.recentStations || []).length;
-  const activeNav = view === "list" ? "home" : view === "topic" ? "explore" : view;
+  // Before the saved data loads (and on the server) we go by a small cookie, so the welcome doesn't pop in or out
+  const firstVisit = store ? !auth.user && !store.recent.length && !Object.keys(store.favShows || {}).length && !(store.recentStations || []).length : !returning;
+  useEffect(() => {
+    if (store && !firstVisit) { try { document.cookie = "yr=1; max-age=31536000; path=/; samesite=lax"; } catch { /* ignore */ } }
+  }, [store, firstVisit]);
+  const activeNav = view === "list" ? "home" : view === "topic" ? "explore" : view === "post" || view === "profile" ? "feed" : view;
 
   return (
     <>
       <header className="top">
         <a className="logo" href="/" onClick={goHome} aria-label="yappr home">
-          <LogoMark />
+          <LogoMark animated />
           <span>yappr</span>
         </a>
         <nav className="top-nav" aria-label="Main">
@@ -228,11 +276,17 @@ function Shell({ initialShow, initialEp, initialTopic }) {
             country={country} setCountry={setCountry} panel={panel} seeAll={seeAll} firstVisit={firstVisit}
           />
         ) : view === "explore" ? (
-          <ExploreView openTopic={openTopic} panel={panel} country={country} />
+          <ExploreView openTopic={openTopic} panel={panel} country={country} onAskYapi={() => { setSearchMode("yapi"); nav("search"); }} />
         ) : view === "topic" ? (
           <TopicView q={topic} openTopic={openTopic} panel={panel} country={country} onBack={() => nav("explore")} />
+        ) : view === "feed" ? (
+          <FeedView onOpenPost={openPost} onOpenProfile={openProfile} />
+        ) : view === "post" ? (
+          <PostView key={postId} id={postId} onBack={() => (window.history.length > 1 ? window.history.back() : nav("feed"))} onOpenPost={openPost} onOpenProfile={openProfile} />
+        ) : view === "profile" ? (
+          <ProfileView key={profileHandle} handle={profileHandle} onBack={() => (window.history.length > 1 ? window.history.back() : nav("feed"))} onOpenPost={openPost} onOpenProfile={openProfile} />
         ) : view === "search" ? (
-          <SearchView mode={mode} panel={panel} />
+          <SearchView mode={mode} panel={panel} searchMode={searchMode} setSearchMode={setSearchMode} country={country} openTopic={openTopic} />
         ) : view === "library" ? (
           <Library panel={panel} seeAll={seeAll} nav={nav} openTopic={openTopic} />
         ) : (
@@ -255,6 +309,7 @@ function NavButtons({ active, nav }) {
   const items = [
     { id: "home", label: "Home", icon: "home" },
     { id: "explore", label: "Explore", icon: "compass" },
+    { id: "feed", label: "Feed", icon: "comment" },
     { id: "search", label: "Search", icon: "search" },
     { id: "library", label: "Library", icon: "library" },
   ];
@@ -268,16 +323,23 @@ function NavButtons({ active, nav }) {
 
 /* ---------- data + small pieces ---------- */
 
-function useFeed(url) {
-  const [data, setData] = useState({ state: url ? "loading" : "idle", feeds: [], shows: [], stations: [], episodes: [] });
+const fromSeed = (d) => ({ state: "ok", feeds: d.feeds || [], shows: d.shows || [], stations: d.stations || [], episodes: d.episodes || [], basis: d.basis, note: d.note, raw: d });
+
+export function useFeed(url) {
+  const seed = useContext(SeedCtx);
+  const seededUrl = useRef(url && seed[url] ? url : null);
+  const [data, setData] = useState(() => (url && seed[url] ? fromSeed(seed[url]) : { state: url ? "loading" : "idle", feeds: [], shows: [], stations: [], episodes: [] }));
   useEffect(() => {
     if (!url) { setData({ state: "idle", feeds: [], shows: [], stations: [], episodes: [] }); return; }
+    if (seededUrl.current === url) { seededUrl.current = null; return; } // already have it from the server
+    if (seed[url] && data.raw !== seed[url]) { setData(fromSeed(seed[url])); return; }
     const ac = new AbortController();
     setData((d) => ({ ...d, state: "loading" }));
     getJSON(url, ac.signal)
       .then((d) => setData({ state: "ok", feeds: d.feeds || [], shows: d.shows || [], stations: d.stations || [], episodes: d.episodes || [], basis: d.basis, note: d.note, raw: d }))
       .catch((err) => { if (err.name !== "AbortError") setData({ state: "error", feeds: [], shows: [], stations: [], episodes: [], error: err.message }); });
     return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
   return data;
 }
@@ -321,7 +383,7 @@ function ShowTile({ f, rank, selected, onClick }) {
   );
 }
 
-function StationTile({ st }) {
+export function StationTile({ st }) {
   const player = usePlayer();
   const now = player.ep && player.ep.id === `radio-${st.id}`;
   const on = now && player.playing;
@@ -344,7 +406,7 @@ function StationTile({ st }) {
   );
 }
 
-function EpisodeCard({ show, ep, onPlay, queue }) {
+export function EpisodeCard({ show, ep, onPlay, queue }) {
   const player = usePlayer();
   const now = player.ep && player.ep.id === ep.id;
   const playing = now && player.playing;
@@ -421,7 +483,8 @@ function Shelf({ id, title, note, kind, items, state, error, ranked, panel, onSe
   );
 }
 
-const showKey = (f) => (f.itunesId ? `it:${f.itunesId}` : `pi:${f.id}`);
+// Open shows by their Podcast Index id when we have it; chart entries only have an Apple id
+const showKey = (f) => (f.id ? `pi:${f.id}` : `it:${f.itunesId}`);
 
 // A shelf whose items come from one of our API routes
 function FeedShelf({ url, pick = "feeds", fallbackUrl, ...rest }) {
@@ -670,7 +733,7 @@ function ListView({ def, panel, onBack }) {
 }
 
 // A grid of shows. Opening one expands its details right below its row; the rows after it move down.
-function ShowGrid({ gridId, data, open, onToggle, onClose, onPlay, emptyText, newIds }) {
+export function ShowGrid({ gridId, data, open, onToggle, onClose, onPlay, emptyText, newIds }) {
   const gridRef = useRef(null);
   const [cols, setCols] = useState(2);
   const feeds = data.feeds;
@@ -755,7 +818,22 @@ function StationGrid({ data, emptyText }) {
 
 /* ---------- Search ---------- */
 
-function SearchView({ mode, panel }) {
+function SearchView({ mode, panel, searchMode, setSearchMode, country, openTopic }) {
+  const [yapiOn, setYapiOn] = useState(null);
+  useEffect(() => { fetch("/api/yapi").then((r) => r.json()).then((d) => setYapiOn(!!d.enabled)).catch(() => setYapiOn(false)); }, []);
+  const switcher = yapiOn ? (
+    <div className="controls-row">
+      <div className="switcher search-switch" role="group" aria-label="Search or ask yapi">
+        <button aria-pressed={searchMode !== "yapi"} onClick={() => setSearchMode("search")}><Icon name="search" />Search</button>
+        <button aria-pressed={searchMode === "yapi"} onClick={() => setSearchMode("yapi")}><Icon name="sparkle" />Ask yapi</button>
+      </div>
+    </div>
+  ) : null;
+  if (yapiOn && searchMode === "yapi") return <YapiView panel={panel} country={country} openTopic={openTopic} switcher={switcher} />;
+  return <ClassicSearch mode={mode} panel={panel} switcher={switcher} />;
+}
+
+function ClassicSearch({ mode, panel, switcher }) {
   const player = usePlayer();
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState(mode === "live" ? "stations" : "shows");
@@ -790,6 +868,7 @@ function SearchView({ mode, panel }) {
   return (
     <section className="sec search-view">
       <h1 className="view-h">Search</h1>
+      {switcher}
       <label className="search">
         <Icon name="search" />
         <input
@@ -844,6 +923,7 @@ function Library({ panel, seeAll, nav, openTopic }) {
     <section className="sec library">
       <h1 className="view-h">Your library</h1>
       <AccountCard />
+      <MyProfileRow />
 
       {empty ? (
         <div className="empty">
@@ -910,9 +990,10 @@ function Library({ panel, seeAll, nav, openTopic }) {
 }
 
 
-/* ---------- Explore and topics ---------- */
 
-function TopicChips({ topics, onOpen }) {
+/* ---------- shared: topic chips ---------- */
+
+export function TopicChips({ topics, onOpen }) {
   return (
     <div className="chips topic-chips">
       {topics.map((t) => (
@@ -924,137 +1005,20 @@ function TopicChips({ topics, onOpen }) {
   );
 }
 
-function ExploreView({ openTopic, panel, country }) {
-  const player = usePlayer();
-  const lang = findCountry(country).lang;
-  const data = useFeed(country ? `/api/explore?lang=${lang}` : null);
-  const d = data.raw || {};
-  const topics = d.topics || [];
-  const followed = Object.values((player.store && player.store.topics) || {});
-  const big = topics.slice(0, 4);
-
+function MyProfileRow() {
+  const social = useSocial();
+  if (!social.enabled || !social.user) return null;
+  const p = social.profile;
   return (
-    <section className="sec explore">
-      <h1 className="view-h">Explore</h1>
-      <p className="sec-note">What podcasts are talking about right now.</p>
-
-      {followed.length ? (
-        <div className="lib-sec">
-          <div className="lib-head"><h2>Topics you follow</h2></div>
-          <TopicChips topics={followed.map((t) => ({ topic: t.topic }))} onOpen={openTopic} />
-        </div>
-      ) : null}
-
-      {data.state === "error" ? <div className="empty" role="alert"><b>Explore didn't load.</b>{data.error}</div> : null}
-
-      <div className="lib-sec">
-        <div className="lib-head"><h2>Trending topics</h2></div>
-        {data.state === "loading" && !topics.length ? (
-          <div className="chips">{Array.from({ length: 10 }).map((_, i) => <span key={i} className="chip skel" style={{ width: 80 + (i % 3) * 30 }}>&nbsp;</span>)}</div>
-        ) : topics.length ? (
-          <TopicChips topics={topics.slice(0, 18)} onOpen={openTopic} />
-        ) : data.state === "ok" ? <p className="q-empty">Nothing is trending across enough shows yet. Try a topic below.</p> : null}
-      </div>
-
-      {big.length ? (
-        <div className="lib-sec">
-          <div className="lib-head"><h2>Big stories</h2></div>
-          <div className="story-grid">
-            {big.map((t) => (
-              <button key={t.topic} className="story-card" onClick={() => openTopic(t.topic)}>
-                {t.rising ? <span className="rise-pill"><Icon name="trend" />Rising</span> : null}
-                <b>{t.topic}</b>
-                <span>{t.shows} shows talking about it{t.recentShows ? `, ${t.recentShows} in the last 12 hours` : ""}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {(d.news || []).length ? (
-        <div className="lib-sec">
-          <div className="lib-head">
-            <h2>Catch up on the news</h2>
-            <button className="see-all play-all" onClick={() => player.playAll(d.news)}><Icon name="play" />Play all</button>
-          </div>
-          <div className="shelf-row wide">{d.news.map((it) => <EpisodeCard key={it.ep.id} show={it.show} ep={it.ep} onPlay={panel.onPlay} />)}</div>
-        </div>
-      ) : null}
-
-      {(d.fresh || []).length ? (
-        <div className="lib-sec">
-          <div className="lib-head"><h2>Fresh from popular shows</h2></div>
-          <div className="shelf-row wide">{d.fresh.map((it) => <EpisodeCard key={it.ep.id} show={it.show} ep={it.ep} onPlay={panel.onPlay} />)}</div>
-        </div>
-      ) : null}
-
-      <div className="lib-sec">
-        <div className="lib-head"><h2>Browse topics</h2></div>
-        <TopicChips topics={BROWSE_TOPICS.map((t) => ({ topic: t }))} onOpen={openTopic} />
-      </div>
-    </section>
+    <button className="my-profile" onClick={() => (p ? social.openProfile(p.handle) : social.editProfile())}>
+      {p ? <ProfileAvatar p={p} size={44} /> : <span className="avatar" style={{ width: 44, height: 44 }}><Icon name="user" /></span>}
+      <span className="meta">
+        <b>{p ? <>{p.display_name} <Verified kind={p.verified} /></> : "Set up your public profile"}</b>
+        <span className="sub">{p ? `@${p.handle}, your posts and comments` : "Pick a handle to post, comment and follow people"}</span>
+      </span>
+      <Icon name="up" />
+    </button>
   );
 }
 
-function TopicView({ q, openTopic, panel, country, onBack }) {
-  const player = usePlayer();
-  const [more, setMore] = useState(false);
-  const lang = findCountry(country).lang;
-  const data = useFeed(q && country ? `/api/topic?q=${encodeURIComponent(q)}&lang=${lang}&country=${country}` : null);
-  const d = data.raw || {};
-  const eps = d.episodes || [];
-  const following = player.isTopicFollowed(q);
-  useEffect(() => { setMore(false); }, [q]);
-  if (!q) return null;
 
-  return (
-    <section className="sec topic-view">
-      <div className="list-head">
-        <button className="icon-btn" onClick={onBack} aria-label="Back to Explore"><Icon name="back" /></button>
-        <div className="topic-title">
-          <h1>{q}</h1>
-          {data.state === "ok" ? <p>{eps.length ? `${eps.length} recent episodes from ${d.showCount || eps.length} shows` : "No recent episodes yet"}</p> : null}
-        </div>
-      </div>
-      <div className="topic-actions">
-        <button className={`pill-btn${following ? " ghost" : ""}`} onClick={() => player.toggleTopic(q)} aria-pressed={following}>
-          <Icon name={following ? "bell" : "plus"} />{following ? "Following" : "Follow topic"}
-        </button>
-        {eps.length ? <button className="cta" onClick={() => player.playAll(eps.slice(0, 5))}><Icon name="play" />Play the latest</button> : null}
-        <button className="round-btn" onClick={() => player.share({ title: `${q} on yappr`, text: `What podcasts are saying about ${q}`, url: `${window.location.origin}/topic/${encodeURIComponent(q)}` })} aria-label="Share topic"><Icon name="share" /></button>
-      </div>
-
-      {data.state === "error" ? <div className="empty" role="alert"><b>This topic didn't load.</b>{data.error}</div> : null}
-      {data.state === "loading" && !eps.length ? <div className="list" aria-busy="true">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="row skel" style={{ height: 92 }} />)}</div> : null}
-
-      {eps.length ? (
-        <div className="lib-sec">
-          <div className="lib-head"><h2>Latest episodes</h2></div>
-          <div className="list">{eps.slice(0, more ? 40 : 8).map((it) => <EpisodeCard key={it.ep.id} show={it.show} ep={it.ep} onPlay={panel.onPlay} />)}</div>
-          {eps.length > 8 && !more ? <div className="center"><button className="pill-btn ghost more-btn" onClick={() => setMore(true)}>Show more episodes</button></div> : null}
-        </div>
-      ) : data.state === "ok" ? <div className="empty">No episodes mention {q} in the last few weeks. Try a related topic, or follow it to hear when one does.</div> : null}
-
-      {(d.shows || []).length ? (
-        <div className="lib-sec">
-          <div className="lib-head"><h2>Shows about {q}</h2></div>
-          <ShowGrid gridId="topic-shows" data={{ state: "ok", feeds: d.shows }} {...panel} emptyText="" />
-        </div>
-      ) : null}
-
-      {(d.live || []).length ? (
-        <div className="lib-sec">
-          <div className="lib-head"><h2>{d.liveTitle || "Live now"}</h2></div>
-          <div className="shelf-row">{d.live.map((st) => <StationTile key={st.id} st={st} />)}</div>
-        </div>
-      ) : null}
-
-      {(d.related || []).length ? (
-        <div className="lib-sec">
-          <div className="lib-head"><h2>Related topics</h2></div>
-          <TopicChips topics={d.related.map((t) => ({ topic: t }))} onOpen={openTopic} />
-        </div>
-      ) : null}
-    </section>
-  );
-}

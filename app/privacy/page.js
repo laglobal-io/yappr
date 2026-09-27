@@ -28,7 +28,25 @@ export default function Privacy() {
         If you turn on new-episode alerts, we also store a push notification address for your browser. We use it only to tell you when
         a show you favorited posts a new episode. Turning alerts off or signing out removes it from this device.
       </p>
+      <p>
+        If you set up a public profile, your handle, display name, bio, photo, posts, comments, reposts, who you follow and your
+        follower counts are public. Your email address, your votes and likes (except their totals), and your listening history are
+        not. You can delete your posts at any time.
+      </p>
       <p>To delete your account and everything linked to it, email {mail} from the address you signed in with.</p>
+      <h2>Analytics</h2>
+      <p>
+        We count page views and measure how fast pages load using Vercel Web Analytics and Speed Insights. They don&rsquo;t use
+        cookies or track you across other sites, and we only see totals (for example, how many people opened Explore), not who you are.
+      </p>
+
+      <h2>yapi (AI search)</h2>
+      <p>
+        When you ask yapi something, your question and the conversation so far are sent to our AI provider, Anthropic, to
+        generate an answer, along with your country and language so results fit where you are. yappr doesn&rsquo;t keep your
+        yapi conversations; they disappear when you leave the page. Please don&rsquo;t put personal or sensitive information in
+        your questions.
+      </p>
 
       <h2>What reaches our servers</h2>
       <p>

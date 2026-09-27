@@ -6,7 +6,7 @@ export async function generateMetadata({ params }) {
   const topic = decodeURIComponent(q).slice(0, 60);
   const title = `${topic} podcasts: the latest episodes | yappr`;
   const description = `What podcasts are saying about ${topic} right now. Listen free on yappr.`;
-  return { title, description, openGraph: { title, description, type: "website", siteName: "yappr" } };
+  return { title, description, alternates: { canonical: `/topic/${encodeURIComponent(topic)}` }, openGraph: { title, description, type: "website", siteName: "yappr" } };
 }
 
 export default async function TopicPage({ params }) {
